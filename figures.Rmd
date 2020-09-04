@@ -40,16 +40,7 @@ sample_info.m[!sample_ID%like%'Control', producer:=T]
 
 ```{r RNAseq}
 library(tximport)
-
-if(grepl('chihchung', Sys.info()["nodename"])){
-  base.path <- '~/GoogleDrive/Sequence/2018_Johan_HEK_CHO'
-  # path.cho <- '../Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/CHO/'
-  # path.hek <- '../Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/HEK293/'
-}else if(grepl('jabba', Sys.info()["nodename"])){
-  base.path <- '~/data2/Sequence/2018_Johan_HEK_CHO'
-  # path.cho <- '~/data/Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/CHO/'
-  # path.hek <- '~/data/Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/HEK293/'
-}
+base.path = getwd()
 
 files.dt <- data.table()
 # files.list.all <- data.table()
