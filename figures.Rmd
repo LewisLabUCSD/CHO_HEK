@@ -25,7 +25,7 @@ library(patchwork)
 Titer
 ```{r titer information}
 library(readxl)
-sample_info.m <- read_excel("chohek/Final concentrations per sample update_V4.xlsx", 
+sample_info.m <- read_excel("Final concentrations per sample update_V4.xlsx", 
                             sheet = "Sheet2") %>% as.data.table() %>% .[is.na(titer), titer:=0] 
 sample_info.m[, Data_file_legal:=gsub(pattern = '\\ |\\(|\\)', '_', Data_file)]
 sample_info.m <- sample_info.m[ !sample_ID%in%c('ANGPTL5', 'Control_no_vector')]
