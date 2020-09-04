@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_CXCL13_293Freestyle_2__OLD__lib287351_6140_7_1.fastq.gz, NG-17526_CXCL13_293Freestyle_2__OLD__lib287351_6140_7_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 11835275,
+    "num_assigned_fragments": 11835275,
+    "num_frags_with_consistent_mappings": 11486526,
+    "num_frags_with_inconsistent_or_orphan_mappings": 348892,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 255,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 11486526,
+    "SF": 85194,
+    "SR": 263443,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

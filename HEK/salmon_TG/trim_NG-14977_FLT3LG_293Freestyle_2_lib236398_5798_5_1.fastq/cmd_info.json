@@ -1,0 +1,10 @@
+{
+    "salmon_version": "0.13.1",
+    "index": "/home/chihchung/genome/cho_2018/hek_TG_varRegion_exp_salmonDb",
+    "libType": "A",
+    "threads": "8",
+    "mates1": "trim_NG-14977_FLT3LG_293Freestyle_2_lib236398_5798_5_1.fastq.gz",
+    "mates2": "trim_NG-14977_FLT3LG_293Freestyle_2_lib236398_5798_5_2.fastq.gz",
+    "output": "salmon_TG/trim_NG-14977_FLT3LG_293Freestyle_2_lib236398_5798_5_1.fastq",
+    "auxDir": "aux_info"
+}

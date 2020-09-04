@@ -1,0 +1,10 @@
+{
+    "salmon_version": "0.13.1",
+    "index": "/home/chihchung/genome/cho_2018/hek_noTG_varRegion_exp_salmonDb",
+    "libType": "A",
+    "threads": "8",
+    "mates1": "NG-14596_293Freestyle_2_CTRL_lib230116_5687_7_1.fastq.gz",
+    "mates2": "NG-14596_293Freestyle_2_CTRL_lib230116_5687_7_2.fastq.gz",
+    "output": "salmon_noTG/NG-14596_293Freestyle_2_CTRL_lib230116_5687_7_1.fastq",
+    "auxDir": "aux_info"
+}

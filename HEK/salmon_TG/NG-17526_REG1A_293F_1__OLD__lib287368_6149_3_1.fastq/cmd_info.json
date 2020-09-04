@@ -1,0 +1,10 @@
+{
+    "salmon_version": "0.13.1",
+    "index": "/home/chihchung/genome/cho_2018/hek_TG_varRegion_exp_salmonDb",
+    "libType": "A",
+    "threads": "8",
+    "mates1": "NG-17526_REG1A_293F_1__OLD__lib287368_6149_3_1.fastq.gz",
+    "mates2": "NG-17526_REG1A_293F_1__OLD__lib287368_6149_3_2.fastq.gz",
+    "output": "salmon_TG/NG-17526_REG1A_293F_1__OLD__lib287368_6149_3_1.fastq",
+    "auxDir": "aux_info"
+}

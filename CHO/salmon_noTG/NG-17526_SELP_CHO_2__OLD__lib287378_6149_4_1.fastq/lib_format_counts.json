@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_SELP_CHO_2__OLD__lib287378_6149_4_1.fastq.gz, NG-17526_SELP_CHO_2__OLD__lib287378_6149_4_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 30367155,
+    "num_assigned_fragments": 30367155,
+    "num_frags_with_consistent_mappings": 28850713,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1516494,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 317,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 28850713,
+    "SF": 519695,
+    "SR": 996482,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

@@ -1,0 +1,21 @@
+{
+    "read_files": "[ trim_NG-14977_HGF_CHO_1_lib236412_5798_6_1.fastq.gz, trim_NG-14977_HGF_CHO_1_lib236412_5798_6_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 31060634,
+    "num_assigned_fragments": 31060634,
+    "num_frags_with_consistent_mappings": 29671045,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1389639,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 152,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 29671045,
+    "SF": 452025,
+    "SR": 937462,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

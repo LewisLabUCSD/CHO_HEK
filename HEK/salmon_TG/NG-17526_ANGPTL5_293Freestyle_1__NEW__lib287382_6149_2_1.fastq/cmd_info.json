@@ -1,0 +1,10 @@
+{
+    "salmon_version": "0.13.1",
+    "index": "/home/chihchung/genome/cho_2018/hek_TG_varRegion_exp_salmonDb",
+    "libType": "A",
+    "threads": "8",
+    "mates1": "NG-17526_ANGPTL5_293Freestyle_1__NEW__lib287382_6149_2_1.fastq.gz",
+    "mates2": "NG-17526_ANGPTL5_293Freestyle_1__NEW__lib287382_6149_2_2.fastq.gz",
+    "output": "salmon_TG/NG-17526_ANGPTL5_293Freestyle_1__NEW__lib287382_6149_2_1.fastq",
+    "auxDir": "aux_info"
+}

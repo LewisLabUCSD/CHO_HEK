@@ -1,0 +1,10 @@
+{
+    "salmon_version": "0.13.1",
+    "index": "/home/chihchung/genome/cho_2018/chok1_noTG_varRegion_exp_salmonDb",
+    "libType": "A",
+    "threads": "8",
+    "mates1": "trim_NG-14596_NRTN_CHO_1_lib230101_5715_4_1.fastq.gz",
+    "mates2": "trim_NG-14596_NRTN_CHO_1_lib230101_5715_4_2.fastq.gz",
+    "output": "salmon_noTG/trim_NG-14596_NRTN_CHO_1_lib230101_5715_4_1.fastq",
+    "auxDir": "aux_info"
+}

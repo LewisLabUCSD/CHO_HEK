@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_REG1A_293Freestyle_1__OLD__lib287367_6149_3_1.fastq.gz, NG-17526_REG1A_293Freestyle_1__OLD__lib287367_6149_3_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 33829952,
+    "num_assigned_fragments": 33829952,
+    "num_frags_with_consistent_mappings": 32779609,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1050524,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 293,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 32779609,
+    "SF": 254607,
+    "SR": 795624,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

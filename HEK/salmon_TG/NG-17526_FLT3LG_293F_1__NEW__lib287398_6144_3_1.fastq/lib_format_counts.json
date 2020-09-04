@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_FLT3LG_293F_1__NEW__lib287398_6144_3_1.fastq.gz, NG-17526_FLT3LG_293F_1__NEW__lib287398_6144_3_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 28161846,
+    "num_assigned_fragments": 28161846,
+    "num_frags_with_consistent_mappings": 27196872,
+    "num_frags_with_inconsistent_or_orphan_mappings": 965150,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 292,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 27196872,
+    "SF": 338111,
+    "SR": 626747,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

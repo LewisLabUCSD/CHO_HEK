@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_RSPO1_CHO_1__OLD__lib287369_6159_7_1.fastq.gz, NG-17526_RSPO1_CHO_1__OLD__lib287369_6159_7_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 8186763,
+    "num_assigned_fragments": 8186763,
+    "num_frags_with_consistent_mappings": 7767763,
+    "num_frags_with_inconsistent_or_orphan_mappings": 419052,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 402,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 7767763,
+    "SF": 135301,
+    "SR": 283349,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

@@ -1,0 +1,66 @@
+[2019-11-14 04:01:18.558] [jointLog] [info] Fragment incompatibility prior below threshold.  Incompatible fragments will be ignored.
+[2019-11-14 04:01:18.558] [jointLog] [warning] 
+
+NOTE: It appears you are running salmon without the `--validateMappings` option.
+Mapping validation can generally improve both the sensitivity and specificity of mapping,
+with only a moderate increase in use of computational resources. 
+Mapping validation is planned to become a default option (i.e. turned on by default) in
+the next release of salmon.
+Unless there is a specific reason to do this (e.g. testing on clean simulated data),
+`--validateMappings` is generally recommended.
+
+[2019-11-14 04:01:18.558] [jointLog] [info] parsing read library format
+[2019-11-14 04:01:18.558] [jointLog] [info] There is 1 library.
+[2019-11-14 04:01:18.652] [jointLog] [info] Loading Quasi index
+[2019-11-14 04:01:18.652] [jointLog] [info] Loading 32-bit quasi index
+[2019-11-14 04:01:29.310] [jointLog] [info] done
+[2019-11-14 04:01:29.310] [jointLog] [info] Index contained 158,689 targets
+[2019-11-14 04:01:30.179] [jointLog] [info] Automatically detected most likely library type as ISR
+[2019-11-14 04:06:27.454] [jointLog] [info] Thread saw mini-batch with a maximum of 0.98% zero probability fragments
+[2019-11-14 04:06:27.454] [jointLog] [info] Thread saw mini-batch with a maximum of 1.00% zero probability fragments
+[2019-11-14 04:06:27.454] [jointLog] [info] Thread saw mini-batch with a maximum of 1.00% zero probability fragments
+[2019-11-14 04:06:27.454] [jointLog] [info] Thread saw mini-batch with a maximum of 0.98% zero probability fragments
+[2019-11-14 04:06:27.465] [jointLog] [info] Thread saw mini-batch with a maximum of 0.90% zero probability fragments
+[2019-11-14 04:06:27.514] [jointLog] [info] Thread saw mini-batch with a maximum of 0.94% zero probability fragments
+[2019-11-14 04:06:27.527] [jointLog] [info] Thread saw mini-batch with a maximum of 0.92% zero probability fragments
+[2019-11-14 04:06:27.639] [jointLog] [info] Thread saw mini-batch with a maximum of 0.96% zero probability fragments
+[2019-11-14 04:06:27.851] [jointLog] [info] Computed 185,439 rich equivalence classes for further processing
+[2019-11-14 04:06:27.851] [jointLog] [info] Counted 30,457,516 total reads in the equivalence classes 
+[2019-11-14 04:06:27.865] [jointLog] [info] Number of fragments discarded because they have only dovetail (discordant) mappings : 4,509,730
+[2019-11-14 04:06:27.865] [jointLog] [info] Mapping rate = 75.442%
+
+[2019-11-14 04:06:27.865] [jointLog] [info] finished quantifyLibrary()
+[2019-11-14 04:06:27.865] [jointLog] [info] Starting optimizer
+[2019-11-14 04:06:27.971] [jointLog] [info] Marked 0 weighted equivalence classes as degenerate
+[2019-11-14 04:06:27.982] [jointLog] [info] iteration = 0 | max rel diff. = 7470.22
+[2019-11-14 04:06:27.852] [fileLog] [info] 
+At end of round 0
+==================
+Observed 40372109 total fragments (40372109 in most recent round)
+
+[2019-11-14 04:06:29.065] [jointLog] [info] iteration = 100 | max rel diff. = 18.3105
+[2019-11-14 04:06:30.215] [jointLog] [info] iteration = 200 | max rel diff. = 14.8545
+[2019-11-14 04:06:31.427] [jointLog] [info] iteration = 300 | max rel diff. = 4.70233
+[2019-11-14 04:06:32.703] [jointLog] [info] iteration = 400 | max rel diff. = 1.32742
+[2019-11-14 04:06:34.111] [jointLog] [info] iteration = 500 | max rel diff. = 6.61375
+[2019-11-14 04:06:35.514] [jointLog] [info] iteration = 600 | max rel diff. = 1.85411
+[2019-11-14 04:06:36.955] [jointLog] [info] iteration = 700 | max rel diff. = 0.604196
+[2019-11-14 04:06:38.535] [jointLog] [info] iteration = 800 | max rel diff. = 11.7856
+[2019-11-14 04:06:40.006] [jointLog] [info] iteration = 900 | max rel diff. = 0.151884
+[2019-11-14 04:06:41.466] [jointLog] [info] iteration = 1,000 | max rel diff. = 0.079192
+[2019-11-14 04:06:43.002] [jointLog] [info] iteration = 1,100 | max rel diff. = 0.0762329
+[2019-11-14 04:06:44.564] [jointLog] [info] iteration = 1,200 | max rel diff. = 0.881159
+[2019-11-14 04:06:45.815] [jointLog] [info] iteration = 1,300 | max rel diff. = 0.0526394
+[2019-11-14 04:06:47.225] [jointLog] [info] iteration = 1,400 | max rel diff. = 0.867522
+[2019-11-14 04:06:48.601] [jointLog] [info] iteration = 1,500 | max rel diff. = 0.120186
+[2019-11-14 04:06:49.998] [jointLog] [info] iteration = 1,600 | max rel diff. = 0.204319
+[2019-11-14 04:06:51.407] [jointLog] [info] iteration = 1,700 | max rel diff. = 0.0531458
+[2019-11-14 04:06:52.900] [jointLog] [info] iteration = 1,800 | max rel diff. = 0.0370418
+[2019-11-14 04:06:54.283] [jointLog] [info] iteration = 1,900 | max rel diff. = 0.0749401
+[2019-11-14 04:06:55.711] [jointLog] [info] iteration = 2,000 | max rel diff. = 0.799543
+[2019-11-14 04:06:57.084] [jointLog] [info] iteration = 2,100 | max rel diff. = 1.01214
+[2019-11-14 04:06:58.356] [jointLog] [info] iteration = 2,200 | max rel diff. = 0.179427
+[2019-11-14 04:06:58.429] [jointLog] [info] iteration = 2,208 | max rel diff. = 0.00857691
+[2019-11-14 04:06:58.444] [jointLog] [info] Finished optimizer
+[2019-11-14 04:06:58.444] [jointLog] [info] writing output 
+

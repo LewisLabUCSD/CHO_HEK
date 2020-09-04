@@ -1,0 +1,21 @@
+{
+    "read_files": "[ trim_NG-14596_JAG2_293F_1_lib230091_5711_8_1.fastq.gz, trim_NG-14596_JAG2_293F_1_lib230091_5711_8_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 28520001,
+    "num_assigned_fragments": 28520001,
+    "num_frags_with_consistent_mappings": 27815203,
+    "num_frags_with_inconsistent_or_orphan_mappings": 704937,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 177,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 27815203,
+    "SF": 135752,
+    "SR": 569008,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

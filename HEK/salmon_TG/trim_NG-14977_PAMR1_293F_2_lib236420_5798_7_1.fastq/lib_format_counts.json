@@ -1,0 +1,21 @@
+{
+    "read_files": "[ trim_NG-14977_PAMR1_293F_2_lib236420_5798_7_1.fastq.gz, trim_NG-14977_PAMR1_293F_2_lib236420_5798_7_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 36959621,
+    "num_assigned_fragments": 36959621,
+    "num_frags_with_consistent_mappings": 35871850,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1087905,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 172,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 35871850,
+    "SF": 271245,
+    "SR": 816488,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

@@ -1,0 +1,21 @@
+{
+    "read_files": "[ trim_NG-14596_ARTN_293Freestyle_1_lib230093_5711_8_1.fastq.gz, trim_NG-14596_ARTN_293Freestyle_1_lib230093_5711_8_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 28294872,
+    "num_assigned_fragments": 28294872,
+    "num_frags_with_consistent_mappings": 27092502,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1202605,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 210,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 27092502,
+    "SF": 371182,
+    "SR": 831213,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

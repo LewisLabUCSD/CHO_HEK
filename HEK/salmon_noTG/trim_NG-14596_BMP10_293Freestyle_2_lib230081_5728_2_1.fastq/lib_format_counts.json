@@ -1,0 +1,21 @@
+{
+    "read_files": "[ trim_NG-14596_BMP10_293Freestyle_2_lib230081_5728_2_1.fastq.gz, trim_NG-14596_BMP10_293Freestyle_2_lib230081_5728_2_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 31335554,
+    "num_assigned_fragments": 31335554,
+    "num_frags_with_consistent_mappings": 29807111,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1528739,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 227,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 29807111,
+    "SF": 510114,
+    "SR": 1018398,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

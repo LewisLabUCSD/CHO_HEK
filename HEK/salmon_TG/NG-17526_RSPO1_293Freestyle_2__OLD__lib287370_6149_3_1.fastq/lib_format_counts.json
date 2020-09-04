@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_RSPO1_293Freestyle_2__OLD__lib287370_6149_3_1.fastq.gz, NG-17526_RSPO1_293Freestyle_2__OLD__lib287370_6149_3_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 32709340,
+    "num_assigned_fragments": 32709340,
+    "num_frags_with_consistent_mappings": 31711964,
+    "num_frags_with_inconsistent_or_orphan_mappings": 997539,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 280,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 31711964,
+    "SF": 214096,
+    "SR": 783163,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}

@@ -1,0 +1,21 @@
+{
+    "read_files": "[ NG-17526_FSTL3_CHO_1__NEW__lib287390_6149_1_1.fastq.gz, NG-17526_FSTL3_CHO_1__NEW__lib287390_6149_1_2.fastq.gz]",
+    "expected_format": "ISR",
+    "compatible_fragment_ratio": 1.0,
+    "num_compatible_fragments": 26288664,
+    "num_assigned_fragments": 26288664,
+    "num_frags_with_consistent_mappings": 24783626,
+    "num_frags_with_inconsistent_or_orphan_mappings": 1505099,
+    "MSF": 0,
+    "OSF": 0,
+    "ISF": 379,
+    "MSR": 0,
+    "OSR": 0,
+    "ISR": 24783626,
+    "SF": 447202,
+    "SR": 1057518,
+    "MU": 0,
+    "OU": 0,
+    "IU": 0,
+    "U": 0
+}
