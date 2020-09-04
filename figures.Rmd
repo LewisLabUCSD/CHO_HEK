@@ -75,7 +75,7 @@ files.list.all[, sample_ID_unique:= paste0(cellLine, '_', sample_ID,
 # files.list.all[, OLDNEW := factor(OLDNEW, levels = c('OLD', 'NEW'))]
 
 ## add PSIM data
-PSIM.augmented <- fread('../databases/uniprot_PSIM/uniprot.human.PTM.csv') %>% 
+PSIM.augmented <- fread('databases/uniprot.human.PTM.csv') %>% 
   .[PTM.count>0] %>%
   .[, PTM:=tstrsplit(PTM.name, '__')[[1]]] %>%
   .[, geneSymbol:=tstrsplit(`Entry name`, '_')[[1]]] %>% 
@@ -298,7 +298,7 @@ We suspect the significant differential expression between CHO and HEK could ari
 ```{r}
 # 
 txi.cho.converted <- lapply(txi.cho, txi.id.conversion,
-                            conversion.table = fread('../databases/ConversionTable/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
+                            conversion.table = fread('databases/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
 )
 txi.CHO.HEK <- mapply(txi.merge, txi.cho.converted, txi.human) ## noTG, since transgenes are not aligned
 
@@ -349,7 +349,7 @@ dev.off()
 pathway analysis: no significant canonical pathways enriched.
 ```{r}
 ranks.cellLine <- cellLine.dds.res.dt[!is.na(log2FoldChange),] %>% .[, .(Symbol, log2FoldChange)]%>% tibble::deframe()
-fgseaRes.cellLine <- fgsea::fgsea(pathway=fgsea::gmtPathways(sprintf('../databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt', 'c2.cp.kegg')), 
+fgseaRes.cellLine <- fgsea::fgsea(pathway=fgsea::gmtPathways(sprintf('databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt', 'c2.cp.kegg')), 
                                   stats = ranks.cellLine, nproc =  32, nperm = 20000)
 
 figS11 <- fgseaRes.cellLine %>%{
@@ -376,7 +376,7 @@ fig.PCA(vsd = vsd.cellLine[,vsd.cellLine$cellLine.binary=='HEK'], to.color = 'pr
 ## mosaic secM plot
 ### getting secM
 ```{r}
-secM.amir <- fread('../databases/Human_components_feizi.csv') %>% setnames('gene_name', 'humanSymbol') %>% .[, .(ensgid, humanSymbol, geneID, Subsystem)]
+secM.amir <- fread('databases/Human_components_feizi.csv') %>% setnames('gene_name', 'humanSymbol') %>% .[, .(ensgid, humanSymbol, geneID, Subsystem)]
 
 ## fuzzy annotation for secretory subsystems
 secM.amir[grepl('trafficking', Subsystem, ignore.case = T), functionalGroup:= 'trafficking']
@@ -440,7 +440,7 @@ transcriptome.usage.dt[, 'protein.expression':=ifelse(sample_ID=='Control', 'non
 
 
 ```{r fig4a}
-tmd.dt <- fread('../databases/180509_proteomaps/Homo sapiens (Human).tsv', col.names = c('protein', 'l1', 'l2', 'l3', 'l4', 'gene', 'pos', 'color' ), header = F)
+tmd.dt <- fread('databases/Homo sapiens (Human).tsv', col.names = c('protein', 'l1', 'l2', 'l3', 'l4', 'gene', 'pos', 'color' ), header = F)
 tmd.dt[, gene.name:=tstrsplit(gene, ':')[[1]]]
 tmd.dt[, uniprotID:=as.integer(tstrsplit(gene, ':')[[2]])]
 tmd.dt[, c('pos', 'gene', 'l4'):=NULL]
@@ -450,7 +450,7 @@ tmd.dt %<>% rbind(data.table(protein = 'protein', l1 = 'transgene', l2 = 'transg
 )
 
 
-tmd.dt.color <- fread('../databases/180509_proteomaps/Homo sapiens (Human)rgb.tsv', na.strings = '', col.names = c('protein', 'l1', 'l2', 'l3', 'l4', 'gene', 'pos', 'color'))
+tmd.dt.color <- fread('databases/Homo sapiens (Human)rgb.tsv', na.strings = '', col.names = c('protein', 'l1', 'l2', 'l3', 'l4', 'gene', 'pos', 'color'))
 tmd.dt.color.l2 <- tmd.dt.color[!is.na(l2) & is.na(l3)]
 tmd.dt.color.l2[, color:=gsub(')$', ', maxColorValue = 256)', color)]
 tmd.dt.color.l2[, color2:= eval(parse(text = color)), by = 1:nrow(tmd.dt.color.l2)]
@@ -662,7 +662,7 @@ fig.ppc <- lapply(propeptide.convertases,
 
 ggsave2(file.name = 'figS13', path.name = 'Figures_CHOHEK/2020/', height = 10, width = 6, plot=fig.ppc)
 
-fig.proteasome <- lapply(intersect(fgsea::gmtPathways(sprintf('../databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt',
+fig.proteasome <- lapply(intersect(fgsea::gmtPathways(sprintf('databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt',
                                                               'c2.cp.kegg'))[['KEGG_PROTEASOME']],
                                    rownames(dds.cellLine)) %>% as.list %>% `names<-`(. , .),
                          function(g) plotCounts(dds.cellLine, g, intgroup = c('producer', 'cellLine', 'sample_ID'), returnData = T)) %>%
@@ -778,7 +778,7 @@ GSEA.custom <- function(res, pathway.custom=NULL, folder.name='CHO',
                    'c2.cp.kegg' #'c2.cp.reactome', 
                    #'c4.all', 'c4.cgn','c5.all', 'c5.bp', 'c5.cc', 'c5.mf', 'c5.bp', 'c6.all', 'c7.all'
                    )){
-    pathway <- fgsea::gmtPathways(sprintf('../databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt', geneSet))
+    pathway <- fgsea::gmtPathways(sprintf('databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt', geneSet))
     fgseaRes <- fgsea::fgsea(pathway=pathway, stats = ranks, nproc =  nproc, nperm = 20000)
     # g(fgseaRes, gsea_table)%=% get_gseaRes_tissue(pathways = pathway, stats_dt = stat.dt, 
     #                                               used_stats_col = 'log2FoldChange', id_column = 'symbol', log_transform = F,
@@ -854,7 +854,7 @@ secM.geneset <- c(
   secM.amir %>% split(by = 'functionalGroup') %>% lapply(function(x) x$humanSymbol)
 )
 
-isomerase.genes <- fread('../databases/GO0003756.txt')$V1 %>% unique
+isomerase.genes <- fread('databases/GO0003756.txt')$V1 %>% unique
 
 secM.geneset <- c(secM.geneset, list('Disulfide isomerase' = isomerase.genes))
 
@@ -1219,7 +1219,7 @@ ggsave2('figS15', 'Figures_CHOHEK/2020/', plot=figS15, width = 8, height = 5)
 Download disulfide isomerase activities from http://amigo.geneontology.org/amigo/term/GO:0003756
 quantify enzyme activities 
 ```{r}
-# isomerase.genes <- fread('../databases/GO0003756.txt')$V1 %>% unique
+# isomerase.genes <- fread('databases/GO0003756.txt')$V1 %>% unique
 # isomerase.genes2 <- c('PDIA6', 'PDIA2', 'PDIA4', 'PDIA3', 'PDIA5', 'P4HB', 'ERO1B', 'ERO1A', 'ERP44', 'ERO1LB', 'TXNDC16', 'PRDX4')
 
 GTclass <- readxl::read_excel("../Austin_glyco/GTclass.xlsx") %>% as.data.table %>% melt(measure.vars = names(.), variable.name = 'class', value.name = 'GT.name') %>% .[!is.na(GT.name)]# %>% .[, GT.name:=tolower(GT.name)]
@@ -1591,7 +1591,7 @@ PCA.plot.Expi_Icosagen <-
 ## transcriptome usage
 ### orthologs conversion
 txi_Expi_Icosagen.converted <- lapply(txi_Expi_Icosagen, txi.id.conversion,
-                                      conversion.table = fread('../databases/ConversionTable/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
+                                      conversion.table = fread('databases/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
 )
 dds_Expi_Icosagen.converted <- DESeqDataSetFromTximport(txi_Expi_Icosagen.converted, colData_Expi_Icosagen %>% dt.to.df(), ~CHO.line)
 dds_Expi_Icosagen.converted %<>% DESeq(parallel = T, betaPrior = T)
@@ -1668,7 +1668,7 @@ filesDE2020.dt[filename%like%'P6975', cellLine:='QMCF']
 filesDE2020.dt[, sample.name:=c('NG-17778_1','NG-17778_2', 'P6975-196_1', 'P6975-196_2')]
 txi.DE2020 <- tximport(filesDE2020.dt[, file.path(path, filename) %>% `names<-`(sample.name)], type = "salmon", tx2gene = cho.tx2gene)
 txi.DE2020.converted <- lapply(txi.DE2020, txi.id.conversion,
-                               conversion.table = fread('../databases/ConversionTable/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
+                               conversion.table = fread('databases/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
 )
 
 
