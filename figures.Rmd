@@ -75,7 +75,7 @@ files.list.all[, sample_ID_unique:= paste0(cellLine, '_', sample_ID,
 # files.list.all[, OLDNEW := factor(OLDNEW, levels = c('OLD', 'NEW'))]
 
 ## add PSIM data
-PSIM.augmented <- fread('databases/uniprot.human.PTM.csv') %>% 
+PSIM.augmented <- rio::import('databases/uniprot.human.PTM.csv.gz') %>% as.data.table %>%
   .[PTM.count>0] %>%
   .[, PTM:=tstrsplit(PTM.name, '__')[[1]]] %>%
   .[, geneSymbol:=tstrsplit(`Entry name`, '_')[[1]]] %>% 
