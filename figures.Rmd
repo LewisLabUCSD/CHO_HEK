@@ -1,0 +1,1740 @@
+---
+title: "CHO HEK plots"
+# output: html_notebook
+---
+
+final publication plots
+
+```{r imports, message=FALSE}
+library(ggpubr)
+library(ggpmisc)
+library(data.table)
+library(magrittr) 
+source('../ppi_assist_func.R')
+source('figures.R')
+library(DESeq2)
+library(ggplot2)
+library(BiocParallel)
+library(pheatmap)
+library(org.Hs.eg.db)
+library(reticulate)
+library(patchwork)
+```
+
+# data import
+Titer
+```{r titer information}
+library(readxl)
+sample_info.m <- read_excel("chohek/Final concentrations per sample update_V4.xlsx", 
+                            sheet = "Sheet2") %>% as.data.table() %>% .[is.na(titer), titer:=0] 
+sample_info.m[, Data_file_legal:=gsub(pattern = '\\ |\\(|\\)', '_', Data_file)]
+sample_info.m <- sample_info.m[ !sample_ID%in%c('ANGPTL5', 'Control_no_vector')]
+sample_info.m[, cellLine.binary:=ifelse(cellLine=='CHO', 'CHO', 'HEK')]
+sample_info.m[, cellLine:=factor(cellLine, levels = c('CHO', '293F', '293Freestyle'))]
+sample_info.m[, cellLineBinary.sample:= paste0(cellLine.binary, '_', sample_ID)]
+sample_info.m[, 'titer (ug/ml)':=titer]
+sample_info.m[sample_ID%like%'Control', producer:=F]
+sample_info.m[!sample_ID%like%'Control', producer:=T]
+
+```
+
+```{r RNAseq}
+library(tximport)
+
+if(grepl('chihchung', Sys.info()["nodename"])){
+  base.path <- '~/GoogleDrive/Sequence/2018_Johan_HEK_CHO'
+  # path.cho <- '../Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/CHO/'
+  # path.hek <- '../Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/HEK293/'
+}else if(grepl('jabba', Sys.info()["nodename"])){
+  base.path <- '~/data2/Sequence/2018_Johan_HEK_CHO'
+  # path.cho <- '~/data/Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/CHO/'
+  # path.hek <- '~/data/Sequence/2018_Johan_HEK_CHO/2018_11_JohanHekCho/HEK293/'
+}
+
+files.dt <- data.table()
+# files.list.all <- data.table()
+for (tg.use in c('noTG', 'TG')){
+  for (cellLine in c('CHO', 'HEK')){
+    ## updated data
+    path <- sprintf('%s/%s/salmon_%s',
+                    base.path,
+                    ifelse(cellLine=="CHO", 'CHO', 'HEK'), 
+                    tg.use)
+    fns = list.files(pattern="quant.sf", path = path, recursive = T)
+    files.dt %<>% rbind(data.table(tg.use =tg.use,
+                                   path = path,
+                                   filename = fns))  
+  }
+}
+
+files.list.all <- sample_info.m[!is.na(Data_file_legal)][, files.dt[filename%like%.SD[, Data_file_legal]],by = c('sample_ID', 'cellLine', 'cellLine.binary', 'titer', 'producer')]
+
+# check remaining unmapped files
+sample_info.m[!is.na(Data_file_legal)][!files.list.all[, .(sample_ID, cellLine.binary, cellLine)] %>% unique(), on = c('sample_ID', 'cellLine.binary', 'cellLine')] 
+
+
+# files.list.all <- files.list.all[!sample_ID%in%sample.to.exclude]
+files.list.all[cellLine%like%'CHO', cellLine.binary:='CHO']
+files.list.all[!cellLine%like%'CHO', cellLine.binary:='HEK']
+files.list.all[, cellLine.sample:= paste0(cellLine, '_', sample_ID)]
+files.list.all[, cellLineBinary.sample:= paste0(cellLine.binary, '_', sample_ID)]
+files.list.all[, sample_ID_unique:= paste0(cellLine, '_', sample_ID,
+                                           rowidv(files.list.all, cols = c('sample_ID', 'cellLine', 'tg.use'), prefix = '_'))]
+
+# files.list.all[, OLDNEW := factor(OLDNEW, levels = c('OLD', 'NEW'))]
+
+## add PSIM data
+PSIM.augmented <- fread('../databases/uniprot_PSIM/uniprot.human.PTM.csv') %>% 
+  .[PTM.count>0] %>%
+  .[, PTM:=tstrsplit(PTM.name, '__')[[1]]] %>%
+  .[, geneSymbol:=tstrsplit(`Entry name`, '_')[[1]]] %>% 
+  .[, 
+    .(geneSymbol.all = unique(c(geneSymbol, parse.semicol.sep(`Gene names`, ' '), parse.semicol.sep(`Gene names  (synonym )`, ' ')))),
+    by = .(`Gene names`, `Gene names  (synonym )`, geneSymbol, PTM.name, Entry, PTM,PTM.count, Length)] %>% 
+  .[, PTM.frac:=PTM.count/Length] %>% 
+  rbind(data.table(.[geneSymbol.all=='NRTN']) %>% .[,geneSymbol.all:='NRTN_PP'])
+PSIM.augmented[PTM.name=='ModResidue__Phosphorylation', PTM:= 'Phosphorylation']
+PSIM.augmented[PTM.name=='ModResidue__Methylation', PTM:= 'Methylation']
+PSIM.augmented[PTM.name=='Glycosylation__N', PTM:= 'N_Glycosylation']
+PSIM.augmented[PTM.name=='Glycosylation__O', PTM:= 'O_Glycosylation']
+# PSIM.augmented %>% fwrite('databases/uniprot_PSIM/uniprot.human.PTM_all.csv')
+
+files.list.all <- merge(files.list.all, PSIM.augmented %>% dcast(geneSymbol.all~PTM, value.var = 'PTM.frac', fun.aggregate = mean, fill = 0),
+                        by.x = c('sample_ID'), by.y = c('geneSymbol.all'), all.x = T)
+files.list.all[, sample_ID:=factor(sample_ID, levels = c('Control_no_vector', 'Control_pQMCF', setdiff(sample_ID, c('Control_no_vector', 'Control_pQMCF'))))]
+
+```
+
+```{r GEO submission}
+
+geo_samples <- sample_info.m[, .(raw_file = 
+                                   list.files(Data_file_legal,path = sprintf('%s/%s',base.path, cellLine.binary)),
+                                 `Sample name` = paste0(cellLine, '_', sample_ID)), by=.(cellLine.binary, cellLine, sample_ID, producer)] %>% 
+  .[, c('title',
+        'source name',
+        'organism',
+        'characteristics: producer',
+        'molecule',
+        'description',
+        'processed data file' 
+  ) :=.(`Sample name`,
+        ifelse(cellLine.binary=='CHO', 'Chinese hamster ovary (CHO) cells', 'Human embryonic kidney 293 (HEK293) cells'),
+        ifelse(cellLine.binary=='CHO', 'Cricetulus griseus', 'Homo sapiens'),
+        ifelse(producer, 'producer', 'non-producer'),
+        'total RNA',
+        NA,
+        'expression.xslx')
+  ] 
+
+geo_samples[, raw_file_i:=paste0('raw file',1:.N), by=.(cellLine.binary, cellLine, sample_ID, `Sample name`)] %>% 
+  dcast(`Sample name`+title+`source name`+organism+`characteristics: producer`+molecule+description+`processed data file`~raw_file_i, value.var='raw_file') %>% 
+  fwrite('geo_samples.csv')
+
+
+geo_samples[, .(`file name`=raw_file,
+                `file type`='fastq',
+                `file checksum`=NA,
+                `file type`='Illumina MiSeq',
+                `read length` = 152, 
+                `single or paired-end` = 'single')] %>% fwrite('geo_raw_files.csv')
+```
+
+## quantify tg yield
+```{r}
+files.list.select <- files.list.all
+tpm.dt.all <- files.list.select[tg.use=='TG', fread(file.path(path, filename)), by = c('cellLine', 'cellLine.binary',
+                                                                                       'sample_ID', 'sample_ID_unique')]
+
+tg.tpm.dt <- tpm.dt.all[, .SD[grepl(paste0(sample_ID, '$'), Name)], by = c('cellLine', 'cellLine.binary',
+                                                                           'sample_ID', 'sample_ID_unique')]
+tg.tpm.dt.mean <- tg.tpm.dt[, lapply(.SD, mean), by = c('cellLine', 'cellLine.binary', 'sample_ID', 'Name'), .SDcols = sapply(tg.tpm.dt, is.numeric)]
+
+transgene.count.yield.dt <- merge(tg.tpm.dt.mean, sample_info.m, by = c('sample_ID', 'cellLine', 'cellLine.binary'))
+sample.TPM.level <- tg.tpm.dt.mean[, .(sample_ID,
+                                       TPM.3level = factor(cut(TPM, quantile(TPM, probs=seq(0,1,1/3)), 
+                                                               include.lowest = T, labels = c('low', 'med', 'high')), 
+                                                           levels = c('control', 'low', 'med', 'high')),
+                                       TPM.quantile = factor(cut(TPM, quantile(TPM), include.lowest = T, 
+                                                                 labels = c('0-25%', '25-50%',
+                                                                            '50-75%', '75-100%')),
+                                                             levels = c('control', '0-25%', '25-50%',
+                                                                        '50-75%', '75-100%'))
+), by=cellLine]
+```
+
+#plotting
+* additional modifications needed to massage the text labels into place
+figure for TG-yield 
+```{r,  fig.retina = 2}
+##scatter plot
+
+transgene.count.yield.dt[, cellLine:=factor(cellLine, levels = c('293Freestyle','293F', 'CHO'))]
+# transgene.count.yield.dt %>% fwrite('databases/201805_chohek/transgene.abund.csv')
+p.yield.rna <- ggplot(transgene.count.yield.dt, aes(.01+TPM, .01+`titer (ug/ml)`, color = cellLine, label = sample_ID))
+# p.yield.rna + geom_point() + stat_cor() + stat_smooth(aes(color = cellLine), method = 'lm', se=FALSE) 
+# p.yield.rna + geom_point() + stat_cor() + stat_smooth(method = 'lm', se=FALSE, alpha = .3) + scale_x_log10() + scale_y_log10() 
+# p.yield.rna + geom_text() + stat_cor() + stat_smooth(method = 'lm', se=FALSE, alpha = .3) + scale_x_log10() + scale_y_log10()
+p.yield.rna + geom_point() + stat_cor(method = 'spearman')  + scale_x_log10() + scale_y_log10() + facet_wrap(~cellLine)
+ggsave('Figures_CHOHEK/figS5_corr.png', width = 10, height = 4, dpi = 150)
+ggsave('Figures_CHOHEK/figS5_corr.pdf', width = 10, height = 4)
+```
+## trend comparison plot
+## use points
+```{r fig2d}
+p <- lemon::grid_arrange_shared_legend(
+  trend.plot(transgene.count.yield.dt, compare = c('CHO', '293F'), text.displacement = .1) + 
+    scale_x_log10(limits = c(10**1.6, 1e6)) + 
+    scale_y_log10(limits = c(1, 1e2)) +
+    ylab('1 + Titer (ug/mg)') +
+    theme(axis.text.x = element_blank(),axis.title.x=element_blank()),
+  trend.plot(transgene.count.yield.dt, compare = c('CHO', '293Freestyle'), text.displacement = .1)+
+    scale_x_log10(limits = c(10**1.6, 1e6)) + 
+    scale_y_log10(limits = c(1, 1e2)) + 
+    xlab('1 + Transgene TPM') +
+    ylab('1 + Titer (ug/mg)'),
+  ncol = 1,
+  nrow = 2)#+ geom_point(aes(shape = cellLine), size = 3)
+ggsave2(file.name = 'fig2D',path.name = 'Figures_CHOHEK/2020/', plot = p, width = 6*1.25, height = 9*1.25)
+
+
+```
+
+## comparing paired protein yields
+```{r figS6}
+
+figs6A <- 
+  lapply(c('293F', '293Freestyle', 'CHO'), function(to.exclude){
+    
+    tg.dt <- copy(transgene.count.yield.dt)
+    # tg.dt[, cellLine:= factor(cellLine, levels = rev(levels(cellLine)))]
+    conds <- tg.dt[cellLine!= to.exclude, unique(cellLine) %>% sort() %>% as.character()]
+    plt.dt = tg.dt[cellLine!=to.exclude, .(cellLine, TPM = .01+TPM, sample_ID)] 
+    p <- plt.dt[!sample_ID%in%plt.dt[, .N, by = c('sample_ID')][N!=2]] %>%
+      dcast(sample_ID~cellLine, value.var = 'TPM')%>% 
+      ggpaired(cond1 = conds[2], cond2 = conds[1],
+               # palette = "jco",
+               # fill = 'condition',
+               line.color = "gray", 
+               line.size = .5,
+               xlab = 'cellLine',
+               ylab = '.01 + TPM',
+               repel = T) +
+      stat_compare_means(paired = T, method = 't.test', label.y.npc = 'middle', label.x.npc = 'right') + 
+      scale_y_log10() #+ ggtitle(paste0('transgene mRNA abundance ',
+    # paste0(setdiff(c('CHO', '293F', '293Freestyle'),
+    # to.exclude),
+    # collapse = ' v. ')))
+  }
+  )
+
+
+
+transgene.count.yield.dt.lfc <- 
+  transgene.count.yield.dt %>% 
+  .[, lapply(.SD, mean), ,by = .(sample_ID, cellLine.binary), .SDcols = c('TPM', 'titer')] %>% {
+    merge(
+      .[, .(lfc.TPM = log2(.SD[cellLine.binary=='HEK' ,.01+TPM] /.SD[cellLine.binary=='CHO', .01+TPM])), 
+        by = 'sample_ID'],
+      .[, .(lfc.titer = log2(.SD[cellLine.binary=='HEK' ,.01+titer] /.SD[cellLine.binary== 'CHO', .01+titer])), 
+        by = 'sample_ID'], 
+      by = 'sample_ID')
+  } %>% 
+  .[, titer.tpm.lfc.diff.scale := scale(lfc.titer) - scale(lfc.TPM)] %>% 
+  .[, titer.tpm.lfc.diff := lfc.titer - lfc.TPM] %>% 
+  .[, titer.tpm.rank.change := rank(lfc.titer) - rank(lfc.TPM)]
+
+figS6B <- transgene.count.yield.dt.lfc[, .(lfc.TPM, lfc.titer, sample_ID, is_PLG=sample_ID=='PLG')] %>% 
+  ggplot(aes(lfc.TPM, lfc.titer, label=sample_ID, color=is_PLG)) +
+  geom_point() + ggrepel::geom_text_repel() + 
+  xlab('mRNA fold change from CHO to HEK293') +
+  ylab('titer fold change from CHO to HEK293') +
+  ggpubr::stat_cor() + theme_bw()
+
+figS6 <- 
+  (((figs6A[[1]] | figs6A[[2]] | figs6A[[3]]) + plot_layout(tag_level = 'new')) / figS6B) + 
+  plot_annotation(tag_levels = c('A', '1'))
+
+ggsave2('figS6AB', plot = figS6, path.name = 'Figures_CHOHEK/2020/', height = 10, width = 11)
+```
+
+
+# pathway and other analysis (no tg)
+## data import (no tg)
+```{r importing and read scaling counts}
+cho.txdb <- GenomicFeatures::makeTxDbFromGFF('~/genome/cho_2018/chok1.gff3')
+cho.k <- keys(cho.txdb, keytype = "TXNAME")
+cho.tx2gene <- AnnotationDbi::select(cho.txdb, cho.k, "GENEID", "TXNAME")
+
+cho.files <- files.list.select[tg.use=='noTG'& cellLine.binary == 'CHO'][, file.path(path, filename)]
+names(cho.files) <- files.list.select[tg.use=='noTG'& cellLine.binary == 'CHO']$sample_ID_unique
+txi.cho <- tximport(cho.files, type = "salmon", tx2gene = cho.tx2gene)#, countsFromAbundance = 'lengthScaledTPM') ## countsFromAbundance = 'lengthScaledTPM' to control for differential isoform usage
+
+
+human.txdb <- GenomicFeatures::makeTxDbFromGFF('~/genome/human/GRCh38_latest_genomic.gff')
+human.k <- keys(human.txdb, keytype = "TXNAME")
+human.tx2gene <- AnnotationDbi::select(human.txdb, human.k, "GENEID", "TXNAME")
+# cho.tx2gene[TXNAME%like%'Johan', TXNAME:=gsub('_mRNA$', '', TXNAME)]
+
+human.files <- files.list.select[tg.use=='noTG'& cellLine.binary == 'HEK'][, file.path(path, filename)]
+names(human.files) <- files.list.select[tg.use=='noTG'& cellLine.binary == 'HEK']$sample_ID_unique
+txi.human <- tximport(human.files, type = "salmon", tx2gene = human.tx2gene)#, countsFromAbundance = 'lengthScaledTPM') ## countsFromAbundance = 'lengthScaledTPM' to control for differential isoform usage
+
+cho.dt <- txi.cho[['abundance']] %>% as.data.frame() %>% as.data.table(keep.rownames = 'geneSymbol')
+cho.dt.m <- cho.dt %>% melt(id.vars = 'geneSymbol') %>% .[!variable%like%'IL9']
+cho.dt.m[, cellLine:=tstrsplit(variable, '_')[[1]]]
+cho.dt.m[variable%like%'NRTN_PP', sample_ID:='NRTN_PP']
+cho.dt.m[!variable%like%'NRTN_PP', sample_ID:=tstrsplit(variable, '_')[[2]]]
+
+
+HEK.dt <- txi.human[['abundance']] %>% as.data.frame() %>% as.data.table(keep.rownames = 'geneSymbol')
+HEK.dt.m <- HEK.dt %>% melt(id.vars = 'geneSymbol')  %>% .[!variable%like%'IL9']
+HEK.dt.m[, cellLine:=tstrsplit(variable, '_')[[1]]]
+HEK.dt.m[variable%like%'NRTN_PP', sample_ID:='NRTN_PP']
+HEK.dt.m[!variable%like%'NRTN_PP', sample_ID:=tstrsplit(variable, '_')[[2]]]
+
+wb <- openxlsx::createWorkbook()
+openxlsx::addWorksheet(wb, 'CHO')
+# openxlsx::writeData(wb, 'CHO' , txi.cho[['abundance']], rowNames = T)
+openxlsx::writeData(wb, 'CHO' , cho.dt.m %>% dcast(geneSymbol~cellLine+sample_ID, value.var = 'value', fun = mean) %>% dt.to.df(), rowNames = T)
+openxlsx::addWorksheet(wb, 'HEK')
+# openxlsx::writeData(wb, 'HEK' , txi.human[['abundance']], rowNames = T)
+openxlsx::writeData(wb, 'HEK' , HEK.dt.m %>% dcast(geneSymbol~cellLine+sample_ID, value.var = 'value', fun = mean) %>% dt.to.df(), rowNames = T)
+openxlsx::saveWorkbook(wb, file = "Figures_CHOHEK/expression.xlsx", overwrite = TRUE)
+```
+## txi conversion
+### bridge species
+We suspect the significant differential expression between CHO and HEK could arise from the ortolog following read quantification. Instead of mapping the CHO genes to human, we try to bridge the two species through mouse, and have both HEK and CHO genes map back to mouse.
+```{r}
+# 
+txi.cho.converted <- lapply(txi.cho, txi.id.conversion,
+                            conversion.table = fread('../databases/ConversionTable/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
+)
+txi.CHO.HEK <- mapply(txi.merge, txi.cho.converted, txi.human) ## noTG, since transgenes are not aligned
+
+genes.idx <- which((rowSums(txi.CHO.HEK$abundance) >0) & (rowSums(txi.CHO.HEK$abundance) >0) )
+
+txi.CHO.HEK.dup.collapse <- txi.CHO.HEK %>% lapply(txi.mean.function, 
+                                                   files.list.select[tg.use=='noTG'][,.(sample_ID_unique, sample_ID, cellLine)]
+)
+
+sample_info.deseq <-  files.list.select[tg.use=='noTG'] %>% 
+  .[, lapply(.SD, mean),by = .(sample_ID, cellLine, cellLine.binary, producer), 
+    .SDcols = sapply(., is.numeric)] %>% 
+  .[, sample_ID_unique := paste0(sample_ID, '_', cellLine)] %>% 
+  .[producer==F, control_type:=gsub(pattern = '^Control_', replacement = '',sample_ID)] %>% 
+  .[sample_ID%like%'Control', sample_ID:='Control'] %>% 
+  .[, sample_ID:= relevel(sample_ID, ref = 'Control') %>% droplevels] %>% 
+  merge(sample.TPM.level, all.x=T) %>% 
+  .[sample_ID=='Control', c('TPM.3level', 'TPM.quantile'):=.(factor('control', levels = levels(sample.TPM.level$TPM.3level)), 
+                                                             factor('control', levels = levels(sample.TPM.level$TPM.quantile)))]
+
+## do not extract transgene here
+dds <- txi.CHO.HEK.dup.collapse %>% 
+  txi.filter(genes.idx) %>% 
+  txi.filter.col(sample_info.deseq[!sample_ID_unique%like%'no_vector', sample_ID_unique]) %>%
+  DESeqDataSetFromTximport(colData =
+                             sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                             dt.to.df(rn.col='sample_ID_unique'), 
+                           ~producer ) 
+
+dds.cellLine <- txi.CHO.HEK.dup.collapse %>% 
+  txi.filter.col(sample_info.deseq[!sample_ID_unique%like%'_no_vector_', sample_ID_unique]) %>%
+  txi.filter(genes.idx) %>% 
+  DESeqDataSetFromTximport(colData =
+                             sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                             dt.to.df(rn.col='sample_ID_unique'), 
+                           ~producer + cellLine.binary ) 
+dds.cellLine %<>% DESeq(parallel = T, betaPrior = T)
+vsd.cellLine <- vst(dds.cellLine)
+cellLine.dds.res.dt <- results(dds.cellLine) %>% as.data.frame() %>% as.data.table(keep.rownames = 'Symbol')
+cellLine.dds.res.dt %>% fwrite('Figures_CHOHEK/lfc.cellLine.HEK_vs_CHO.csv')
+ggsave2('figS10', path.name = 'Figures_CHOHEK/2020/', plot = plotMA(results(dds.cellLine), alpha=.05), height = 6, width = 8)
+pdf('Figures_CHOHEK/2020/figS10.pdf')
+plotMA(results(dds.cellLine), alpha=.05)
+dev.off()
+
+```
+
+pathway analysis: no significant canonical pathways enriched.
+```{r}
+ranks.cellLine <- cellLine.dds.res.dt[!is.na(log2FoldChange),] %>% .[, .(Symbol, log2FoldChange)]%>% tibble::deframe()
+fgseaRes.cellLine <- fgsea::fgsea(pathway=fgsea::gmtPathways(sprintf('../databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt', 'c2.cp.kegg')), 
+                                  stats = ranks.cellLine, nproc =  32, nperm = 20000)
+
+figS11 <- fgseaRes.cellLine %>%{
+  ggplot(data=., aes(NES, padj, label=pathway)) + geom_point(alpha=.3) + 
+    ggrepel::geom_label_repel(data = .[padj<.05]) + theme_bw() #+ scale_y_continuous(trans = pv.trans())
+}
+ggsave2('figS11', path.name = 'Figures_CHOHEK/2020/', plot = figS11, width = 8, height = 8)
+# topPathwaysUp.cellLine <- fgseaRes.cellLine[ES > 0, ][head(order(pval), n=10), pathway]
+# topPathwaysDown.cellLine <- fgseaRes.cellLine[ES < 0, ][head(order(pval), n=10), pathway]
+# topPathways.cellLine <- c(topPathwaysUp.cellLine, rev(topPathwaysDown.cellLine))
+# p <- plotGseaTable(pathway[topPathways], ranks, fgseaRes, render = F,
+#                    gseaParam = 0.5)
+```
+
+
+
+PCA plots
+```{r eval=FALSE, include=FALSE}
+fig.PCA(vsd = vsd.cellLine[,vsd.cellLine$cellLine.binary=='CHO'], to.color = 'producer')
+fig.PCA(vsd = vsd.cellLine[,vsd.cellLine$cellLine.binary=='HEK'], to.color = 'producer')
+```
+
+
+## mosaic secM plot
+### getting secM
+```{r}
+secM.amir <- fread('../databases/Human_components_feizi.csv') %>% setnames('gene_name', 'humanSymbol') %>% .[, .(ensgid, humanSymbol, geneID, Subsystem)]
+
+## fuzzy annotation for secretory subsystems
+secM.amir[grepl('trafficking', Subsystem, ignore.case = T), functionalGroup:= 'trafficking']
+secM.amir[grepl('^COPI|^COPII', Subsystem, ignore.case = T), functionalGroup:= 'COPI/COPII']
+secM.amir[grepl('^COPI|^COPII', Subsystem, ignore.case = T), functionalGroup:= 'COPI/COPII']
+secM.amir[is.na(functionalGroup), functionalGroup:= Subsystem]
+secM.amir <- rbind(secM.amir,
+                   data.table(ensgid = 'ENSG00000086619', 
+                              humanSymbol = 'ERO1B',
+                              geneID = 56605,
+                              Subsystem = "Protein folding",
+                              functionalGroup = "Protein folding"))
+```
+
+### getting abund from txi
+
+```{r}
+## getting TPM
+CHO.HEK.tpm <- txi.CHO.HEK.dup.collapse$abundance %>% as.data.table(keep.rownames = 'humanSymbol')
+
+
+secM.amir.tpm <- CHO.HEK.tpm[secM.amir, on = 'humanSymbol'] %>%
+  melt(measure.vars = colnames( txi.CHO.HEK.dup.collapse$abundance),
+       variable.name = 'sample_ID_unique',
+       value.name = 'TPM') %>% 
+  merge(sample_info.deseq, by = 'sample_ID_unique')
+
+Non.secM.amir.tpm <- CHO.HEK.tpm[!humanSymbol%like%'Johan'][!secM.amir, on = 'humanSymbol'] %>% 
+  melt(measure.vars = colnames( txi.CHO.HEK.dup.collapse$abundance),
+       variable.name = 'sample_ID_unique',
+       value.name = 'TPM') %>% 
+  merge(sample_info.deseq, by = 'sample_ID_unique') %>% .[, functionalGroup:='Other']
+
+transcriptome.usage.dt <- rbind(secM.amir.tpm,
+                                Non.secM.amir.tpm,
+                                transgene.count.yield.dt[, c('functionalGroup', 
+                                                             'TPM.quantile',
+                                                             'TPM.3level'):=.(
+                                                               'Transgene',
+                                                               factor('control', levels = levels(sample.TPM.level$TPM.quantile)),
+                                                               factor('control', levels = levels(sample.TPM.level$TPM.3level)))],
+                                fill = T) %>% 
+  .[, functionalGroup:= factor(functionalGroup, levels = c('Transgene', 
+                                                           secM.amir.tpm$functionalGroup %>% unique(),
+                                                           'Other'))] %>% 
+  # .[functionalGroup!='Other'] %>% 
+  # .[cellLine!=2, .(TPM.mean = mean(TPM)),  ## collapsing duplicates
+  #   by = c('humanSymbol', 'ensgid', 'geneID', 'Subsystem', 'functionalGroup', 'cellLine', 'sample_ID', 'sample_ID_unique', 'cellLine.binary', 'producer')] %>% 
+  .[, cellLine:= factor(cellLine, levels = c('CHO', '293F', '293Freestyle'))]
+
+## getting vsd
+CHO.HEK.vsd <- vsd.cellLine %>% assay() %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>%
+  melt(measure.vars = colnames( txi.CHO.HEK.dup.collapse$abundance),
+       variable.name = 'sample_ID_unique',
+       value.name = 'VSD') 
+
+transcriptome.usage.dt <- 
+  merge(transcriptome.usage.dt, CHO.HEK.vsd, by = c('humanSymbol', 'sample_ID_unique'), all = T)
+transcriptome.usage.dt[, 'protein.expression':=ifelse(sample_ID=='Control', 'non-producer', 'producer')]
+```
+
+
+```{r fig4a}
+tmd.dt <- fread('../databases/180509_proteomaps/Homo sapiens (Human).tsv', col.names = c('protein', 'l1', 'l2', 'l3', 'l4', 'gene', 'pos', 'color' ), header = F)
+tmd.dt[, gene.name:=tstrsplit(gene, ':')[[1]]]
+tmd.dt[, uniprotID:=as.integer(tstrsplit(gene, ':')[[2]])]
+tmd.dt[, c('pos', 'gene', 'l4'):=NULL]
+tmd.dt %<>% rbind(data.table(protein = 'protein', l1 = 'transgene', l2 = 'transgene', l3 = 'transgene', 
+                             color = 'rgb(1,1,1)', gene.name = 'transgene', uniprotID = '999999'
+)
+)
+
+
+tmd.dt.color <- fread('../databases/180509_proteomaps/Homo sapiens (Human)rgb.tsv', na.strings = '', col.names = c('protein', 'l1', 'l2', 'l3', 'l4', 'gene', 'pos', 'color'))
+tmd.dt.color.l2 <- tmd.dt.color[!is.na(l2) & is.na(l3)]
+tmd.dt.color.l2[, color:=gsub(')$', ', maxColorValue = 256)', color)]
+tmd.dt.color.l2[, color2:= eval(parse(text = color)), by = 1:nrow(tmd.dt.color.l2)]
+
+
+color.dict <- c(tmd.dt.color.l2[, `names<-`(color2, l2)], 
+                c('transgene' = rgb(1,1,1, maxColorValue = 256)),
+                c('secretory pathway' = rgb(1,1,1, maxColorValue = 256))
+)
+# color.dict.l3 <- tmd.dt$color2 %>% `names<-`(tmd.dt$l3)
+
+tmd.dt.sec <- 
+  rbind(tmd.dt[!gene.name%in%secM.amir$humanSymbol, -'uniprotID'],
+        data.table(protein = 'Proteins', l1 = 'secretory pathway', l2 = 'secretory pathway', l3 = 'secretory pathway',
+                   color = 'rgb(1,1,1)', gene.name = secM.amir$humanSymbol))
+
+fig3A <- transcriptome.usage.dt[, -c('ensgid', 'geneID', 'Subsystem')] %>%
+  .[, .(TPM.mean = mean(TPM)), by = .(humanSymbol, sample_ID, cellLine, protein.expression)] %>%
+  mosaic.plot.simple(tmd.dt = tmd.dt.sec)+ 
+  ggh4x::facet_nested(~cellLine+protein.expression) #+ coord_polar("y", start=0)
+# ggsave2('fig4a_cell_pathway_activities', width = 5, height = 7)
+
+```
+
+
+
+```{r fig4b}
+all.transcriptome.usage.plot <- transcriptome.usage.dt %>% 
+  .[, transcriptome.frac:= TPM/ sum(TPM, na.rm = T), by = c('cellLine', 'sample_ID')]%>%
+  ggplot(aes(sample_ID, transcriptome.frac, fill = functionalGroup)) +
+  geom_bar(stat = 'identity') +
+  facet_grid( ~cellLine) +
+  scale_y_continuous(label = scales::percent) +
+  ylab('Fraction of Transcriptome') +
+  coord_flip() +
+  theme_cleveland() %+replace%
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+
+secM.usage.plot <- all.transcriptome.usage.plot %+% transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')] 
+
+figS7A <- secM.usage.plot + 
+  scale_fill_manual(name = 'Functional Group',
+                    values=c(wesanderson::wes_palette(n=11, name="Darjeeling1", type = 'continuous'))) +
+  theme_bw() %+replace% theme(legend.position="bottom", axis.title.y = element_blank())
+# ggsave2(file.name = 'figS7', path.name = 'Figures_CHOHEK/2020/', plot = figS7, height = 8, width = 8)
+
+
+figS7B <- 
+  transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')] %>% 
+  .[, .(VSD = mean(VSD, na.rm = T)),
+    by = c('functionalGroup', 'cellLine', 'sample_ID', 'producer', 'control_type')] %>% {
+      
+      ggplot(.,aes(cellLine, VSD)) + 
+        geom_boxplot(aes(fill = cellLine), alpha = .4, outlier.alpha = .4, outlier.shape = NA) + 
+        # stat_compare_means(comparisons = list(c("CHO", "293F"),
+        #                                       c("CHO", "293Freestyle")),
+        #                    label = "p.signif", hide.ns = T) + 
+        facet_wrap(~functionalGroup, scales = 'free') +
+        geom_point(data = .[producer==F], aes(x = cellLine, y = VSD, shape = control_type), size = 2, alpha = .5) + 
+        theme(axis.title.x=element_blank(),
+              axis.text.x=element_blank(),
+              axis.ticks.x=element_blank(),
+              strip.text.x = element_text(angle = 0)) +
+        guides(fill=guide_legend(title="Cell Line"), color = guide_legend('Control Type')) +
+        ylab('average transformed count') + theme_bw()
+    }
+# ggsave2(file.name = 'S7B', path.name = 'Figures_CHOHEK/2020/', plot = figS7B, height = 6, width = 9)
+figS7 <- (figS7A / figS7B) +  plot_annotation(tag_levels = 'A')
+# ggsave2(file.name = 'figS7', path.name = 'Figures_CHOHEK/2020/', plot = figS7, height = 12, width = 9)
+## plot with TPM.quantile
+plots.linearTrend <- transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')] %>% 
+  .[, .(VSD = mean(VSD, na.rm = T)),
+    by = c('functionalGroup', 'cellLine', 'sample_ID', 'producer', 'control_type', 'TPM.quantile')] %>%
+  .[producer==T] %>% droplevels() %>% 
+  split(by='cellLine') %>% 
+  lapply(function(.)
+  {
+    ggplot(.[producer==T],aes(TPM.quantile, VSD, color=TPM.quantile)) + 
+      geom_boxplot( alpha = .4, outlier.alpha = .4, outlier.shape = NA) + 
+      scale_colour_brewer(palette = 'BrBG', direction = -1, guide=FALSE)+
+      facet_wrap(~functionalGroup, scales = 'free', nrow = 2) +
+      # geom_point(data = .[producer==F], aes(x = cellLine, y = VSD, shape = control_type), size = 2, alpha = .5) + 
+      theme_bw() +#%+replace%
+      # theme(axis.title.x=element_blank(),
+      #       axis.text.x=element_blank(),
+      #       axis.ticks.x=element_blank(),
+      #       strip.text.x = element_text(angle = 0),
+      #       legend.position="bottom") +
+      guides(fill=guide_legend(title="Cell Line")) + xlab("transgene expression quartile") +
+      ylab('average transformed count') + ggtitle(unique(.$cellLine))
+  }
+  )
+
+plots.linearTrend_avg <- transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')] %>% ## old fig3B
+  .[, .(VSD = mean(VSD, na.rm = T)),
+    by = c('cellLine', 'sample_ID', 'producer', 'control_type', 'TPM.quantile')] %>%
+  .[producer==T] %>% droplevels() %>% 
+  split(by='cellLine') %>% 
+  lapply(function(.)
+  {
+    ggplot(.[producer==T],aes(TPM.quantile, VSD, color=TPM.quantile)) + 
+      geom_boxplot( alpha = .4, outlier.alpha = .4, outlier.shape = NA) + 
+      scale_colour_brewer(palette = 'BrBG', direction = -1, guide=FALSE)+
+      # geom_point(data = .[producer==F], aes(x = cellLine, y = VSD, shape = control_type), size = 2, alpha = .5) + 
+      theme_bw() +#%+replace%
+      # theme(axis.title.x=element_blank(),
+      #       axis.text.x=element_blank(),
+      #       axis.ticks.x=element_blank(),
+      #       strip.text.x = element_text(angle = 0),
+      #       legend.position="bottom") +
+      guides(fill=guide_legend(title="Cell Line")) + xlab("transgene expression quartile") +
+      ylab('average transformed count') + ggtitle(unique(.$cellLine))
+  }
+  )
+
+figS_linearTrend <- 
+  plots.linearTrend[['CHO']] / plots.linearTrend[['293F']] / plots.linearTrend[['293Freestyle']]
+figS_linearTrend_avg <- 
+  plots.linearTrend_avg[['CHO']] +
+  theme(axis.title.x=element_blank()) +
+  plots.linearTrend_avg[['293F']] + 
+  theme(axis.title.y=element_blank())+ 
+  plots.linearTrend_avg[['293Freestyle']] +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank())
+
+# ggsave2(file.name = 'fig4b_sec_activity_group_vsd', height = 6, width = 9)
+ggsave2('figS_linearTrend', 'Figures_CHOHEK/2020/', figS_linearTrend, width=10, height=14)
+ggsave2('figS_linearTrend_avg', 'Figures_CHOHEK/2020/', figS_linearTrend_avg, width=10, height=3)
+
+
+fig3B <- transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')] %>% 
+  .[, .(VSD = mean(VSD, na.rm = T)),
+    by = c('cellLine', 'sample_ID', 'producer', 'control_type', 'TPM.quantile')] %>%
+  .[producer==T] %>% droplevels() %>%
+  {
+    ggplot(.,aes(TPM.quantile, VSD)) + 
+      geom_boxplot( alpha = .4, outlier.alpha = .4, outlier.shape = NA) + 
+      # scale_colour_brewer(
+      #   palette = 'YlOrRd', direction = -1,
+      #   guide=FALSE)+
+      # facet_wrap(~functionalGroup, scales = 'free') +
+      geom_point(data = .[producer==F], aes(x = TPM.quantile, y = VSD, shape = control_type), size = 2, alpha = .5) +
+      theme_bw() +#%+replace%
+      # theme(axis.title.x=element_blank(),
+      #       axis.text.x=element_blank(),
+      #       axis.ticks.x=element_blank(),
+      #       strip.text.x = element_text(angle = 0),
+      #       legend.position="bottom") +
+      guides(fill=guide_legend(title="Cell Line")) + xlab("transgene expression quartile") +
+      ylab('secretory pathway expression') + facet_grid(~cellLine)
+  }
+
+cor.sec.usage.dt <- transcriptome.usage.dt[!functionalGroup%in%c('Transgene', 'Other')] %>% 
+  .[, .(functional.group.meanTPM = mean(TPM, na.rm = T)), by = c('sample_ID', 'functionalGroup','cellLine')] %>% 
+  merge(sample_info.m, by = c('cellLine', 'sample_ID')) %>% 
+  .[, .(cor.r = cor(functional.group.meanTPM, `titer (ug/ml)`),
+        cor.r.pv = cor.test(functional.group.meanTPM, `titer (ug/ml)`)$p.value), by = c('functionalGroup')] %>% 
+  .[, cor.r.pv.adj:= p.adjust(cor.r.pv,method = 'BH')]
+
+transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')] %>% 
+  .[, .(functional.group.meanTPM = mean(TPM, na.rm = T)), by = c('sample_ID', 'functionalGroup','cellLine')] %>% 
+  merge(sample_info.m, by = c('cellLine', 'sample_ID')) %>% 
+  ggplot(aes(.01 + functional.group.meanTPM, .01 + `titer (ug/ml)`)) + geom_point(alpha = .3) + facet_wrap(functionalGroup~., scales = 'free') + scale_x_log10() + scale_y_log10() + stat_cor(method = 'spearman')
+ggsave2(file.name = 'Supp_fig_secPathCor', height = 6, width = 9)
+
+
+## diversity of secretory pathway genes
+figS8 <- transcriptome.usage.dt[!functionalGroup%in%c('Transgene','Other')][!is.na(VSD)] %>% ggplot(aes(1+TPM, color=cellLine)) + 
+  geom_density() + scale_x_log10() + theme_bw() + xlab('secretory pathway gene expression (TPM)')
+# ggsave2('figS8', 'Figures_CHOHEK/2020/', height = 4, width = 6)
+
+```
+
+
+plot single genes
+```{r}
+propeptide.convertases <- c('PCSK1',
+                            'PCSK2',
+                            'FURIN',
+                            'PCSK4',
+                            'PCSK5',
+                            'PCSK6',
+                            'PCSK7',
+                            'SKI',
+                            'PCSK9') 
+names(propeptide.convertases) <- sapply(1:9, function(x)paste0('PCSK', x))
+samples.pp <- c('ARTN', 'NRTN_PP', 'BMP10', 'LOX' , 'GCG')
+plt.single.gene <- function(.){
+  # subset.dt <- rbind(.[sample_ID%in%samples.pp] %>% copy %>% .[,type:='propeptide seq'],
+  #                    .[producer==F] %>% copy %>% .[,type:='non producers'])
+  ggplot(., aes(cellLine, count)) + geom_boxplot(aes(color = cellLine)) + facet_wrap(~facet_id, scales = 'free_y') +
+    geom_point(data = .[producer == F], aes(cellLine, count))+
+    stat_compare_means(comparisons = list(c('CHO', '293F'), c('CHO', '293Freestyle')),
+                       # label.y.npc =0.25 ,
+                       hide.ns = T, label = 'p.signif')+
+    xlab('cell line') + ylab('normalized count') +
+    theme(axis.title.x=element_blank(),
+          axis.text.x=element_blank(),
+          axis.ticks.x=element_blank()) + theme_bw() + ggpubr::rotate_x_text(angle = 30)
+  #geom_jitter(data = subset.dt, aes(cellLine.binary, count, color = type))
+}
+
+fig.ppc <- lapply(propeptide.convertases,
+                  function(g) plotCounts(dds.cellLine, g, intgroup = c('producer', 'cellLine', 'sample_ID'), returnData = T)) %>%
+  rbindlist(idcol = 'facet_id') %>% plt.single.gene
+
+ggsave2(file.name = 'figS13', path.name = 'Figures_CHOHEK/2020/', height = 10, width = 6, plot=fig.ppc)
+
+fig.proteasome <- lapply(intersect(fgsea::gmtPathways(sprintf('../databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt',
+                                                              'c2.cp.kegg'))[['KEGG_PROTEASOME']],
+                                   rownames(dds.cellLine)) %>% as.list %>% `names<-`(. , .),
+                         function(g) plotCounts(dds.cellLine, g, intgroup = c('producer', 'cellLine', 'sample_ID'), returnData = T)) %>%
+  rbindlist(idcol = 'facet_id') %>% plt.single.gene()
+ggsave2(file.name = 'figS12', path.name = 'Figures_CHOHEK/2020/', plot=fig.proteasome, height = 10, width = 10)
+
+```
+
+```{r density scatter plot}
+dds_cellLine.binary <- txi.CHO.HEK.dup.collapse %>% 
+  txi.filter(genes.idx) %>% 
+  txi.filter.col(sample_info.deseq[!sample_ID_unique%like%'no_vector', sample_ID_unique]) %>%
+  DESeqDataSetFromTximport(colData =
+                             sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                             dt.to.df(rn.col='sample_ID_unique'), 
+                           ~cellLine.binary ) 
+dds_cellLine.binary <- DESeq(dds_cellLine.binary, parallel = T)
+resultsNames(res_cellLine.binary)
+res_cellLine.binary <- lfcShrink(dds_cellLine.binary, coef = 'cellLine.binary_HEK_vs_CHO', type = 'normal')
+
+
+vsd.dt <- vst(dds_cellLine.binary) %>% assay() %>% as.data.table(keep.rownames = 'symbol') %>%
+  melt(variable.name = 'sample_ID_unique')  %>% merge(as.data.table(dds_cellLine.binary@colData, 
+                                                                    keep.rownames = 'sample_ID_unique'), by = 'sample_ID_unique')
+vsd.condition <- vsd.dt %>% dcast(symbol~cellLine.binary, value.var = 'value', fun.aggregate = mean)
+
+CHO.HEK.diff.dt <- merge(vsd.condition, res_cellLine.binary %>% as.data.frame() %>% as.data.table(keep.rownames = 'symbol'), 
+                         by = 'symbol')
+
+CHO.HEK.diff.dt[, .(symbol, transformed.counts.CHO = CHO, transformed.counts.HEK = HEK, baseMean,
+                    log2FoldChange, lfcSE, pvalue, padj)] %>% {
+                      fwrite(.[order(-log2FoldChange)][1:200], 'Figures_CHOHEK/Table2_part1_high_in_HEK.csv')
+                      fwrite(.[order(log2FoldChange)][1:200], 'Figures_CHOHEK/Table2_part2_high_in_CHO.csv')
+                    }
+
+
+co.expr.dt <- 
+  rbind(
+    data.table(
+      groupID = 'groupI',
+      humanSymbol = c('EIF2AK2', 'HSPA1B', 'TBC1D9', 'HSPA4L',
+                      'RAB11FIP1', 'MYO5B', 'MGAT3', 'SNAP25', 'AGAP2',
+                      'RAB6B', 'DERL3', 'SVIP', 'GALNT18')),
+    data.table(
+      groupID = 'groupII',
+      humanSymbol = c('JUN', 'PDIA4', 'ATF4', 'SRP9')),
+    data.table(
+      groupID = 'groupIII',
+      humanSymbol =  c('HSPA8', 'PDIA3', 'RAB31', 'RAB43'))
+  )
+
+secM.expr.diff <- merge(secM.amir, CHO.HEK.diff.dt, by.x ='humanSymbol', by.y = 'symbol')
+# secM.expr.diff <- fread('chohek/diff.tx/DEseq2_HEK_vs_CHO_secM.csv')
+fig4c_scatter <- 
+  secM.expr.diff%>%{
+    pv.breaks = c(1e-100,
+                  1e-50,
+                  1e-25,
+                  1e-10,
+                  1e-2,
+                  1e-1)
+    dist.to.xy.limit = 1.5
+    library(ggrepel)
+    d.outlier <- .
+    d.outlier[, `-log(padj)` := -log(padj)]
+    d.outlier[is.infinite( `-log(padj)`),  `-log(padj)` := d.outlier[!is.infinite( `-log(padj)`), 
+                                                                     max( `-log(padj)`, na.rm = T)
+    ]
+    ]
+    d.outlier[, dist.to.xy := abs(CHO - HEK) *(2**.5)/2 ]
+    d.outlier%>% 
+      ggplot(aes(CHO, HEK, label = humanSymbol)) + 
+      # stat_ellipse(geom = 'polygon', level = .95, alpha = .15)+
+      geom_point(aes(color = functionalGroup, size =  padj, alpha =  padj)) +
+      scale_size(trans=pv.trans(psuedo.pv = 1e-150), breaks = pv.breaks)+
+      scale_alpha(trans=pv.trans(psuedo.pv = 1e-150), range = c(0.05, .6),
+                  breaks = pv.breaks)+
+      # scale_alpha_continuous(range = c(0.05, .6)) +
+      ggrepel::geom_label_repel(data = d.outlier[co.expr.dt, on = 'humanSymbol'],
+                                aes(label = humanSymbol, fill = groupID), show.legend = T, size = 3)  +
+      geom_abline(slope = 1, alpha = .4, linetype = 'dashed') +
+      # geom_ribbon(data = data.table(x = seq(from = range(d.outlier$CHO)[1], to = range(d.outlier$CHO)[2])),
+      #             mapping = aes(x = x, ymax = x+dist.to.xy.limit*(2**.5), ymin = x-dist.to.xy.limit*(2**.5)), inherit.aes = F, alpha = .1)+
+      xlab('CHO (transformed counts)') + ylab('HEK (transformed counts)') + coord_fixed()
+  }
+# fig4c_scatter %>% plotly::ggplotly()
+ggsave2(file.name = 'fig4c_scatter', width = 10, height = 6)
+
+
+source('../GSEA.R')
+GSEA.custom <- function(res, pathway.custom=NULL, folder.name='CHO', 
+                        fn.postfix = '', symbolcol='humanSymbol', lfccol='log2FC',   nproc=1) {
+  
+  ranks <- res[!is.na(get(lfccol)),] %>% .[, .(get(symbolcol), get(lfccol))]%>% tibble::deframe()
+  all.fgseaRes <- data.table()
+  if(!is.null(pathway.custom)){
+    fgseaRes <- fgsea::fgsea(pathway=pathway.custom, stats = ranks, nproc =  nproc, nperm=20000)
+    if(!is.null(fn.postfix)&!is.null(folder.name)){
+      fwrite(fgseaRes, sprintf('Figures_CHOHEK/GSEA/%s/%s.csv', folder.name, fn.postfix))
+      pdf(sprintf('Figures_CHOHEK/GSEA/%s/%s.pdf',folder.name, fn.postfix))
+      plotGseaTable(pathway.custom[fgseaRes$pathway],
+                    ranks, fgseaRes, 
+                    gseaParam = 0.5)
+      dev.off()
+      all.fgseaRes <- rbind(all.fgseaRes, fgseaRes[, geneSet:='secM'])
+    }
+  }else all.fgseaRes <- data.table()
+  pad.size = 0
+  # browser()
+  
+  for(geneSet in c('h.all',
+                   # 'c2.all', 'c2.cgp', 'c2.cp',
+                   'c2.cp.kegg' #'c2.cp.reactome', 
+                   #'c4.all', 'c4.cgn','c5.all', 'c5.bp', 'c5.cc', 'c5.mf', 'c5.bp', 'c6.all', 'c7.all'
+                   )){
+    pathway <- fgsea::gmtPathways(sprintf('../databases/msigdb_v6.2_GMTs/%s.v6.2.symbols.gmt', geneSet))
+    fgseaRes <- fgsea::fgsea(pathway=pathway, stats = ranks, nproc =  nproc, nperm = 20000)
+    # g(fgseaRes, gsea_table)%=% get_gseaRes_tissue(pathways = pathway, stats_dt = stat.dt, 
+    #                                               used_stats_col = 'log2FoldChange', id_column = 'symbol', log_transform = F,
+    #                                               nproc = 32, minSize = 3, demo_fig = T,
+    #                                               plotcolwidths = c(8, 3.2, 0.9, 1.2, 1.2),
+    #                                               legend.text = c("Pathway", "Ranked enrichment", "NES", "pval", "padj"))
+    # ggsave(sprintf('output/2019_esko/GSEA/%s.png', geneSet), plot = gsea_table, height = 14, width = 14)
+    if(!is.null(fn.postfix)&!is.null(folder.name)){
+      fwrite(fgseaRes, sprintf('Figures_CHOHEK/GSEA/%s/%s.csv', folder.name, geneSet))
+      
+      topPathwaysUp <- fgseaRes[ES > 0, ][head(order(pval), n=10), pathway]
+      topPathwaysDown <- fgseaRes[ES < 0, ][head(order(pval), n=10), pathway]
+      topPathways <- c(topPathwaysUp, rev(topPathwaysDown))
+      p <- plotGseaTable(pathway[topPathways], ranks, fgseaRes, render = F,
+                         gseaParam = 0.5)
+      ggsave(sprintf('Figures_CHOHEK/GSEA/%s/%s.pdf',folder.name, geneSet), plot = p, height = 14, width = 14)
+    }
+    all.fgseaRes <- rbind(all.fgseaRes, fgseaRes[, geneSet:=geneSet])
+  }
+  
+  return(all.fgseaRes)
+}
+gsea.cellLineBinary<- GSEA.custom( res_cellLine.binary %>% as.data.frame() %>% as.data.table(keep.rownames = 'symbol'),
+                                   symbolcol = 'symbol',
+                                   fn.postfix='cellLineBinary', lfccol = 'log2FoldChange', folder.name = 'Hek_CHO_binary')
+```
+
+```{r MA plots}
+source('../Austin_glyco/glycol_assist.R')
+fig3C <- ggmaplot(dt.to.df(secM.expr.diff), size = 5, select.top.method = 'fc', top = 20)
+
+fig3 <- (fig3A|((fig3B+ ggpubr::rotate_x_text(angle = 30))/fig3C))+  plot_annotation(tag_levels = 'A')+plot_layout(widths = c(1, 1.25))
+ggsave2(file.name = 'fig3', path.name = 'Figures_CHOHEK/2020/', plot = fig3, width = 16, height = 12)
+```
+
+
+
+```{r fig6ha}
+dds.cho <- dds[, grepl('_CHO$', colnames(dds))] %>%  DESeq(parallel = T, betaPrior = T) #~producer
+dds.hek <- dds[, !grepl('_CHO$', colnames(dds))] %>%  DESeq(parallel = T, betaPrior = T) #~producer
+
+dds.293F <- dds[, grepl('_293F$', colnames(dds))] %>%  DESeq(parallel = T, betaPrior = T)
+dds.293Freestyle <- dds[, grepl('_293Freestyle$', colnames(dds))] %>%  DESeq(parallel = T, betaPrior = T)
+
+res.cho <- results(dds.cho) %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>% .[, padj:=NULL]
+res.hek <- results(dds.hek) %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>% .[, padj:=NULL]
+
+
+res.293F <- results(dds.293F) %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>% .[, padj:=NULL]
+res.293Freestyle <- results(dds.293Freestyle) %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>% .[, padj:=NULL]
+
+
+all.res <- merge(res.cho, res.hek, by = 'humanSymbol', suffixes = c('.CHO', '.HEK'))
+
+all.res %>% fwrite('Figures_CHOHEK/table_CHOHEK_activation_fig5b.csv')
+
+
+fig5A <- fig.lfc.comparison(all.res, n.sig = 20) 
+
+# ggsave2('fig5A','Figures_CHOHEK/2020/', width = 7, height = 7)
+
+message(sprintf('enrichment of secM in top 20 most differentially expressed genes: %s', 1-sum(dhyper(x=  0:4, k = 20, m = nrow(secM.amir), n = nrow(all.res) - nrow(secM.amir)))
+)
+)
+```
+
+differential activation of the secretory pathway
+==> use gene set enrichment analysis
+Download disulfide isomerase activities from http://amigo.geneontology.org/amigo/term/GO:0003756
+```{r}
+secM.geneset <- c(
+  list(all.secM = secM.amir$humanSymbol), 
+  secM.amir %>% split(by = 'functionalGroup') %>% lapply(function(x) x$humanSymbol)
+)
+
+isomerase.genes <- fread('../databases/GO0003756.txt')$V1 %>% unique
+
+secM.geneset <- c(secM.geneset, list('Disulfide isomerase' = isomerase.genes))
+
+
+gsea.CHO<- GSEA.custom(res.cho, fn.postfix='secM_diffActivation', pathway.custom=secM.geneset, lfccol = 'log2FoldChange', folder.name = 'CHO')
+gsea.293F <- GSEA.custom(res.293F, fn.postfix='secM_diffActivation', pathway.custom=secM.geneset, lfccol = 'log2FoldChange', folder.name = '293F')
+gsea.293Freestyle <- GSEA.custom(res.293Freestyle, fn.postfix='secM_diffActivation', pathway.custom=secM.geneset, lfccol = 'log2FoldChange', folder.name = '293Freestyle')
+
+all.gsea.diffActivation <- rbind(
+  gsea.CHO[, cellLine:='CHO'],
+  gsea.293F[, cellLine:='293F'],
+  gsea.293Freestyle[, cellLine:='293Freestyle']
+)
+
+## visualization
+source('../bayes_model_aux.R')
+focus.gsea.diffActivation <- all.gsea.diffActivation[, .SD[min(padj)<.1], by=.(geneSet,pathway)]
+lfc.scatter.dt <- 
+  focus.gsea.diffActivation[geneSet=='secM'|pathway%in%c('KEGG_RIBOSOME', 'KEGG_PROTEIN_EXPORT')] %>% 
+  .[pathway=='all.secM', pathway:='All secretory components'] %>% 
+  .[pathway=='KEGG_RIBOSOME', pathway:= 'Ribosome'] %>% .[pathway=='KEGG_PROTEIN_EXPORT', pathway:='Protein export'] %>% 
+  .[!grepl(pattern = '_SIGNALING_PATHWAY$|_DISEASE$|ASTHMA$|DEPRESSION$|CANCER|LEUKEMIA',pathway)] %>%
+  # all.gsea.diffActivation[geneSet=='secM'] %>% 
+  scatter.heatmap(intA.var = 'cellLine', intB.var = 'pathway', fill.var = 'NES', variance.var = 'padj',
+                  labs.texts = list(fill="Log2FC", size="Significance"), return.scatter.dt = T) 
+
+
+fig5C <- #(7 by 7)
+  ggplot(lfc.scatter.dt,
+         aes(intA, intB, fill=NES, size = padj
+             # , color=factor(signif)
+         )) + 
+  geom_point(pch=21) + 
+  coord_fixed() +
+  scale_radius(trans=pv.trans(psuedo.pv = .025), breaks = c(.025, 
+                                                            .05,
+                                                            .1,
+                                                            .2,
+                                                            # .3,
+                                                            .4)) +
+  scale_fill_gradient2(low = 'blue', mid = 'white', high = 'red', midpoint = 0) +
+  scale_colour_manual(name = "signif",values = c('white', 'black')) + theme_bw() %+replace%
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+        axis.title.x=element_blank(),
+        axis.title.y=element_blank()
+  ) + ggpubr::rotate_x_text(angle = 45) #+
+
+ggsave2('fig5C', 'Figures_CHOHEK/2020/', plot = fig5C,  height = 5, width = 3.5)
+```
+
+transgene load and differential activation
+```{r getting pathway differential activation}
+if(file.exists('res.cellline.sample.fst')){
+  res.cellline.sample <- rio::import('res.cellline.sample.fst') %>% as.data.table()
+}else{
+  
+  dds.sample <- txi.CHO.HEK.dup.collapse %>% 
+    txi.filter(genes.idx) %>% 
+    # txi.filter.col(sample_info.deseq[!sample_ID%like%'Control', sample_ID_unique]) %>% 
+    DESeqDataSetFromTximport(colData =
+                               sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                               dt.to.df(rn.col='sample_ID_unique'), 
+                             ~sample_ID)
+  dds.sample.cho <- dds.sample[, grepl('_CHO$', colnames(dds.sample))] %>%  DESeq(parallel = T, betaPrior = T) 
+  dds.sample.293F <- dds.sample[, grepl('_293F$', colnames(dds.sample))] %>%  DESeq(parallel = T, betaPrior = T)
+  dds.sample.293Freestyle <- dds.sample[, grepl('_293Freestyle$', colnames(dds.sample))] %>%  DESeq(parallel = T, betaPrior = T)
+  
+  getSampleDEG <- function(ddsObj) {
+    
+    parallel::mclapply(setdiff(sample_info.deseq$sample_ID %>% unique(), 'Control'), function(tg){
+      results(ddsObj, contrast = list(sprintf('sample_ID%s', tg),
+                                      'sample_IDControl')) %>% 
+        as.data.frame() %>% 
+        as.data.table(keep.rownames = 'humanSymbol') %>% 
+        .[,sample_ID:=tg]
+    }, mc.cores = 32) %>%
+      rbindlist()
+  }
+  
+  res.CHO.sample <- getSampleDEG(dds.sample.cho)
+  res.293F.sample <- getSampleDEG(dds.sample.293F)
+  res.293Freestyle.sample <- getSampleDEG(dds.sample.293Freestyle)
+  
+  res.CHO.sample.GSEA <- res.CHO.sample %>% split(by='sample_ID') %>% 
+    parallel::mclapply(GSEA.custom,
+                       fn.postfix=NULL, pathway.custom=secM.geneset,
+                       lfccol = 'log2FoldChange',
+                       folder.name = NULL, nproc=1, mc.cores=32) %>% rbindlist(idcol='sample_ID') %>% 
+    .[ ,cellLine:='CHO']
+  res.293F.sample.GSEA <- res.293F.sample %>% split(by='sample_ID') %>% 
+    parallel::mclapply(GSEA.custom,
+                       fn.postfix=NULL, pathway.custom=secM.geneset,
+                       lfccol = 'log2FoldChange',
+                       folder.name = NULL, nproc=1, mc.cores=32) %>% rbindlist(idcol='sample_ID') %>% 
+    .[ ,cellLine:='293F']
+  res.293Freestyle.sample.GSEA <- res.293Freestyle.sample %>% split(by='sample_ID') %>% 
+    parallel::mclapply(GSEA.custom,
+                       fn.postfix=NULL, pathway.custom=secM.geneset,
+                       lfccol = 'log2FoldChange',
+                       folder.name = NULL, nproc=1, mc.cores=32) %>% rbindlist(idcol='sample_ID') %>% 
+    .[ ,cellLine:='293Freestyle']
+  
+  res.cellline.sample <- rbind(CHO.sample.GSEA, res.293F.sample.GSEA, res.293Freestyle.sample.GSEA)
+  res.cellline.sample[, -'leadingEdge'] %>% rio::export('res.cellline.sample.fst')
+}
+
+## GSEA
+```
+
+```{r pathway differential activation and transgene load}
+secM.tg.load <- merge(res.cellline.sample[pathway%in%c('all.secM', secM.amir$functionalGroup)], sample.TPM.level, 
+                      by=c('sample_ID', 'cellLine'))
+
+secM.tg.load %>%split(by='cellLine') %>% 
+  lapply(function(sec.dt){
+    ggplot(sec.dt, aes(TPM.quantile, NES, color=TPM.quantile))+ facet_wrap(~pathway, scales = 'free_y') + geom_boxplot() +
+      scale_colour_brewer(palette = 'BrBG', direction = -1)+
+      # stat_summary(geom="smooth",mapping = aes(group=pathway), color='black',
+      #              se = TRUE, fun.y = mean, 
+      #              fun.ymin = function(x) HPDI(x)[1], 
+      #              fun.ymax = function(x) HPDI(x)[2])  +
+      ggtitle(sprintf('%s secM differential activation across various transgene load', sec.dt[, unique(cellLine)]) )
+  }
+  )
+```
+
+20200506 TPM levels for HSPA8, EIF2AK2 and ERN1 across samples
+```{r}
+# load('20200511figures.rda')
+transcriptome.usage.dt[humanSymbol%in%c('HSPA8', 'EIF2AK2', 'ERN1', 'GH1','HBB')] %>% ggplot(aes(sample_ID, TPM, color=cellLine, fill=cellLine.binary)) +
+  facet_grid(humanSymbol~., scales = 'free_y') + geom_col(position = position_dodge2(preserve = "single"))+
+  theme(legend.position = "top")
+
+transcriptome.usage.dt[humanSymbol%in%c('HSPA8', 'EIF2AK2', 'ERN1','GH1','HBB')] %>% ggplot(aes(humanSymbol, 1+TPM, color=cellLine, fill=cellLine.binary)) + geom_col(position = position_dodge2(preserve = "single"))+
+  theme(legend.position = "top") + ggpubr::stat_compare_means(method = "t.test") + scale_y_log10()
+```
+
+
+
+```{r fig5b}
+## get interaction DE
+dds2 <- txi.CHO.HEK.dup.collapse %>% 
+  txi.filter(genes.idx) %>% 
+  # txi.filter.col(sample_info.deseq[!sample_ID_unique%like%'_no_vector_', sample_ID_unique]) %>%
+  DESeqDataSetFromTximport(colData =
+                             sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                             dt.to.df(rn.col='sample_ID_unique'), 
+                           ~producer+cellLine.binary+cellLine.binary:producer ) 
+dds2 %<>% DESeq(parallel = T) 
+
+dds3 <- txi.CHO.HEK.dup.collapse %>% 
+  txi.filter(genes.idx) %>% 
+  # txi.filter.col(sample_info.deseq[!sample_ID%like%'Control', sample_ID_unique]) %>% 
+  DESeqDataSetFromTximport(colData =
+                             sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                             dt.to.df(rn.col='sample_ID_unique'), 
+                           ~sample_ID+cellLine.binary+cellLine.binary:sample_ID ) %>% 
+  DESeq(parallel = T) 
+
+res.dt.int <- results(dds2, name = 'producerTRUE.cellLine.binaryHEK') %>% 
+  as.data.frame() %>%
+  as.data.table(keep.rownames = 'symbol')
+## volcano plot
+res.dt.int[symbol%in%secM.amir$humanSymbol] %>% {
+  ggplot(data = ., aes(log2FoldChange, -log10(pvalue), label = symbol)) + geom_point() + geom_vline(xintercept = 0,  linetype="dotted") + 
+    ggrepel::geom_text_repel(data = .[pvalue<.1])
+}
+# res.dt[symbol %in% c('CANX', 'SYVN1', 'SEC61A1', 'ERO1B')]
+# res.dt[, signif.:= ifelse(pvalue<.05, 'significant', 'NS')]
+
+
+# DE.genes.int <- res.dt.int[pvalue<.05, symbol] ## filter for significantly differentially activated genes
+
+int.heatmap.lfcs <- ## we want to compare the cellular differences when producing the same r-protein, while accounting for organismal differences
+  parallel::mclapply(setdiff(sample_info.deseq$sample_ID %>% unique(), 'Control'), function(tg){
+    results(dds3, name = sprintf('sample_ID%s.cellLine.binaryHEK', tg)) %>% 
+      # results(dds3, contrast = list(sprintf('sample_ID%s.cellLine.binaryHEK', tg),
+      #                               sprintf('sample_ID_%s_vs_Control', tg)
+      # )) %>% 
+      as.data.frame() %>% 
+      as.data.table(keep.rownames = 'symbol') %>% 
+      .[,sample_ID:=tg]
+  }, mc.cores = 32) %>%
+  rbindlist()
+int.heatmap.lfcs[, .(symbol, 
+                     `r-protein` = sample_ID,
+                     baseMean, log2FoldChange, lfcSE, stat, pvalue, padj)] %>% fwrite('Figures_CHOHEK/int.heatmap.lfcs.csv')
+
+
+
+# transgene.count.yield.dt.lfc <- fread('data/transgene.count.yield.dt.lfc.csv')
+# int.heatmap.lfcs <- fread('chohek/int.lfcs.csv')
+
+fig5b <- merge(transgene.count.yield.dt.lfc, 
+               int.heatmap.lfcs, by = 'sample_ID') %>% 
+  corr.pheatmap.plot(pheatmat.sale = 'row', n.genes = 25, anno.secM = T, cluster_rows = T)
+pdf('Figures_CHOHEK/fig5b_intDEheatmap.pdf', height = 5.5, width = 8)
+fig5b
+dev.off()
+png('Figures_CHOHEK/fig5b_intDEheatmap.png', height = 5.5, width = 8, res = 100)
+fig5b
+dev.off()
+
+# ggsave2('fig5b_intDEheatmap', height = 6, width = 6)
+```
+generate data tables
+```{r}
+dds.cellLine.simple <- txi.CHO.HEK.dup.collapse %>% 
+  txi.filter.col(sample_info.deseq[!sample_ID_unique%like%'_no_vector_', sample_ID_unique]) %>%
+  txi.filter(genes.idx) %>% 
+  DESeqDataSetFromTximport(colData =
+                             sample_info.deseq[colnames(.$counts), on = 'sample_ID_unique'] %>%
+                             dt.to.df(rn.col='sample_ID_unique'), 
+                           ~ cellLine.binary ) 
+
+dds.cellLine.simple %<>% DESeq(parallel = T, betaPrior = T)
+vsd.cellLine.simple.dt <- vst(dds.cellLine.simple)%>% assay() %>% as.data.table(keep.rownames = 'symbol') %>%
+  melt(variable.name = 'sample_ID_cellLine') %>%
+  merge(as.data.table(as.data.frame(dds.cellLine.simple@colData), keep.rownames='sample_ID_cellLine'),
+        by='sample_ID_cellLine') %>% dcast(symbol~cellLine.binary, value.var = 'value', fun.aggregate = mean)
+
+# 
+# as.data.table(keep.rownames = 'symbol')%>%
+#   merge(as.data.table(colData, keep.rownames = 'sample_ID'), by = 'sample_ID')
+
+CHO.HEK.diff.dt <- results(dds.cellLine) %>% as.data.frame() %>% as.data.table(keep.rownames = 'symbol') %>% merge(
+  vsd.cellLine.simple.dt, by = 'symbol') %>% 
+  .[, .(symbol, transformed.counts.CHO = CHO, transformed.counts.HEK = HEK, baseMean,
+        log2FoldChange, lfcSE, pvalue, padj)]
+
+
+CHO.HEK.diff.dt %>% 
+  {
+    fwrite(.[order(-log2FoldChange)][1:200], 'Figures_CHOHEK/Table2_part1_high_in_HEK.csv')
+    fwrite(.[order(log2FoldChange)][1:200], 'Figures_CHOHEK/Table2_part2_high_in_CHO.csv')
+    fwrite(., 'Figures_CHOHEK/Table2_ALL.csv')
+  }
+
+secM.expr.diff <- merge(secM.amir, CHO.HEK.diff.dt, by.x ='humanSymbol', by.y = 'symbol')
+secM.expr.diff[order(-abs(log2FoldChange))] %>% 
+  fwrite('Figures_CHOHEK/Table2_part3_secM.csv')
+```
+
+sequence feature analysis
+```{r generate Uniprot ID}
+transgene.count.yield.dt[, .(unique(sample_ID))]
+
+
+library(org.Hs.eg.db)
+annotation.col1 <- AnnotationDbi::select(org.Hs.eg.db, keys=transgene.count.yield.dt[, unique(sample_ID)],
+                                         columns=c('UNIPROT', 'SYMBOL'), keytype="SYMBOL") %>% as.data.table()
+uniprot.id.dt <- merge(transgene.count.yield.dt[, .(sample_ID = unique(sample_ID))], annotation.col1, by.x='sample_ID', by.y='SYMBOL', all=T)
+no.duplicates <- uniprot.id.dt[, .SD[.N==1],by=sample_ID]
+no.duplicates[sample_ID=='NRTN_PP', UNIPROT:='Q99748']
+with.duplicates <- uniprot.id.dt[, .SD[.N>1],by=sample_ID]
+
+uniprot.id.dt.final <- no.duplicates
+uniprot.id.dt.final %<>% rbind( with.duplicates[, .SD[grepl('^P', UNIPROT)],by=sample_ID]) ## uniprot IDs with leading P seems are legitimate reviewed IDs
+
+with.duplicates[, .SD[!any(grepl('^P', UNIPROT))], by=sample_ID] ## manual curation needed
+uniprot.id.dt.final %<>% rbind(data.table(sample_ID = c('CCL28', 'CXCL13', 'FSTL3', 'PAMR1', 'POSTN'),
+                                          UNIPROT = c('Q9NRJ3', 'O43927', 'O95633', 'Q6UXH9', 'Q15063')))
+## note that we have duplicated uniprot IDs
+# library('biomaRt')
+# ensembl <- useMart('ensembl', dataset="hsapiens_gene_ensembl")
+# annotation <- getBM(attributes=c("uniprot_swissprot_accession", "hgnc_symbol", "uniprot_genename"), filters="uniprot_swissprot_accession", values=c('Q7TNF6','Q53XJ8','P05787','P0CG48','Q96CG1','D3DR86','Q96FS5'), mart=ensembl)
+```
+
+```{r parse uniprot features}
+Uniprot.names <- uniprot.id.dt.final %>% tibble::deframe()
+
+
+
+
+all.uni.dt <- data.table()
+# all.disorder.dt <- data.table()
+# all.hydropathy.dt <- data.table()
+# PDB.mod.dt <- data.table()
+AA.stats.dt <- data.table()
+length.dt <- data.table()
+for (protein.i in seq_along(Uniprot.names)){
+  length.dt %<>% rbind(data.table(sample = names(Uniprot.names)[protein.i],
+                                  length = seqinr::read.fasta(sprintf('https://www.uniprot.org/uniprot/%s.fasta', Uniprot.names[protein.i]))[[1]] %>% length()))
+  uniprot.dt <- fread(sprintf('https://www.uniprot.org/uniprot/%s.gff', Uniprot.names[protein.i]), skip = 2, na.strings = '.')
+  all.uni.dt %<>% rbind(uniprot.dt[,sample := names(Uniprot.names)[protein.i]])
+  
+  seq.AA <- seqinr::read.fasta(sprintf('https://www.uniprot.org/uniprot/%s.fasta', Uniprot.names[protein.i]),
+                               seqtype = "AA")[[1]] %>% 
+    seqinr::AAstat(plot = F)
+  AA.comp.dt <- as.data.table(matrix(seq.AA$Compo[-1]/sum(seq.AA$Compo[-1]), nrow=1, dimnames = list('_', paste0('comp_', names(seq.AA$Compo[-1])))))
+  AA.Prop.dt <- as.data.table(seq.AA$Prop)
+  combinedAAstat <- cbind(AA.Prop.dt, AA.comp.dt)[,sample := names(Uniprot.names)[protein.i]]
+  AA.stats.dt %<>% rbind(combinedAAstat)
+}
+
+AA.stats.df <- AA.stats.dt %>% dt.to.df(rn.col = 'sample') 
+AA.stats.df[,-caret::findCorrelation(cor(AA.stats.df), cutoff = .8)] %>% cor %>% corrplot::corrplot(method='ellipse')
+AA.stats.dt <- AA.stats.df[,-caret::findCorrelation(cor(AA.stats.df), cutoff = .8)] %>% as.data.table(keep.rownames = 'sample')
+
+
+fill.sites <- function(uniprot.dt) {
+  new.sites.dt <- data.table()
+  for (i in 1:nrow(uniprot.dt)){
+    # n.rep <- uniprot.dt[i, V5-V4+1]
+    if(uniprot.dt[i, V3%like%'Disulfide']){
+      new.sites.dt %<>% rbind(
+        rbind(uniprot.dt[i, .(uniprot.id =V1, 
+                              sample,
+                              uniprot.proc= V3, 
+                              res.id = V4,
+                              note=V9)],
+              uniprot.dt[i, .(uniprot.id =V1, 
+                              sample, 
+                              uniprot.proc= V3, 
+                              res.id = V5,
+                              note=V9)])
+      )
+    }else{
+      new.sites.dt %<>% rbind(uniprot.dt[i][, .(uniprot.id =V1, 
+                                                sample, 
+                                                uniprot.proc= rep(V3, V5-V4+1), res.id = V4:V5,
+                                                note=V9)])
+    }
+  }
+  return(new.sites.dt)
+}
+length.dt %>% setkey(sample)
+all.uni.dt.filled <- fill.sites(all.uni.dt)
+uni.dt.secstruc <- all.uni.dt.filled[uniprot.proc%in%c('Helix', 'Turn', 'Beta strand')]
+uni.dt.PTM <- all.uni.dt.filled[uniprot.proc%in%c('Disulfide bond', 'Lipidation', 'Glycosylation', 'Modified residue')]
+uni.dt.PTM[uniprot.proc=='Disulfide bond', mod.type:='Disulfide bond']
+uni.dt.PTM[uniprot.proc=='Lipidation', mod.type:='GPI-anchor']
+uni.dt.PTM[note%like%'Phosphothreonine' | note%like%'Phosphoserine', mod.type:='p']
+uni.dt.PTM[note%like%'O-linked', mod.type:='O-linked.Glycosylation']
+uni.dt.PTM[note%like%'N-linked', mod.type:='N-linked.Glycosylation']
+combined.mod.dt <- uni.dt.PTM[!is.na(mod.type), .(sample, res.id, mod.type)]
+combined.mod.dt<- rbind(combined.mod.dt, combined.mod.dt[mod.type%like%'Glycosylation'][, .(sample, res.id, mod.type='Glycosylation')])
+combined.mod.dt %>% ggplot(aes(mod.type)) + geom_bar() + facet_wrap(~sample) + coord_polar()
+```
+
+plot features
+```{r}
+max.mod.dt <- combined.mod.dt[, .N, by=.(sample, mod.type)][, .(.N.max = max(N)),by=mod.type] %>% setkey(mod.type)
+
+mod.dt.summary <- combined.mod.dt[, .(num.modification = .N), by=.(sample, mod.type)] %>% 
+  .[CJ(sample=unique(combined.mod.dt$sample), mod.type=unique(combined.mod.dt$mod.type)), on=.(sample, mod.type)] %>% 
+  .[is.na(num.modification), num.modification:=0] %>% # fill zeros
+  .[, normalized.modification:= num.modification/max.mod.dt[mod.type, .N.max]] %>% 
+  merge(length.dt, by='sample') %>% 
+  .[, length.norm.mod:=num.modification/length]
+# mod.dt.summary %>% ggplot(aes(mod.type, normalized.modification, fill=mod.type)) + geom_col(width = 1) + 
+#   facet_wrap(~sample) + coord_polar() 
+figS15 <- mod.dt.summary %>% 
+  # .[!mod.type%like%'linked'] %>%
+  .[mod.type%in%c('Disulfide bond', 'Glycosylation', 'p')] %>%
+  .[mod.type=='p', mod.type:='Phosphorylation'] %>% 
+  ggplot(aes(sample, length.norm.mod, fill=mod.type)) + geom_col(width = .9) + 
+  facet_wrap(~mod.type, scales = 'free_x') + coord_flip() + ylab('PTM index') + theme_bw() %+replace% theme(legend.position = 'bottom')
+ggsave2('figS15', 'Figures_CHOHEK/2020/', plot=figS15, width = 8, height = 5)
+```
+
+Download disulfide isomerase activities from http://amigo.geneontology.org/amigo/term/GO:0003756
+quantify enzyme activities 
+```{r}
+# isomerase.genes <- fread('../databases/GO0003756.txt')$V1 %>% unique
+# isomerase.genes2 <- c('PDIA6', 'PDIA2', 'PDIA4', 'PDIA3', 'PDIA5', 'P4HB', 'ERO1B', 'ERO1A', 'ERP44', 'ERO1LB', 'TXNDC16', 'PRDX4')
+
+GTclass <- readxl::read_excel("../Austin_glyco/GTclass.xlsx") %>% as.data.table %>% melt(measure.vars = names(.), variable.name = 'class', value.name = 'GT.name') %>% .[!is.na(GT.name)]# %>% .[, GT.name:=tolower(GT.name)]
+
+GTclass <- GTclass[class!='O-glycan_Mucin']
+enzyme.gsea.dt <- 
+  int.heatmap.lfcs %>% split(by='sample_ID') %>% parallel::mclapply(function(res,symbolcol='symbol',
+                                                                             lfccol='log2FoldChange'){
+    ranks <- res[!is.na(get(lfccol)),] %>% .[, .(get(symbolcol), get(lfccol))]%>% tibble::deframe()
+    fgseaRes <- fgsea::fgseaMultilevel(pathway=
+                                         c(list('isomerase.genes'= isomerase.genes),
+                                           GTclass[class%like%'glycan'] %>%
+                                             split(by='class', drop = T) %>% lapply(function(dt) dt$GT.name), 
+                                           list('all.GTs' = GTclass[class%like%'glycan', unique(GT.name)]),
+                                           list('secM.ER glycosylation' = 
+                                                  secM.amir[Subsystem=='ER glycosylation', humanSymbol]),
+                                           list('secM.Golgi glycosylation' = 
+                                                  secM.amir[Subsystem=='Golgi glycosylation', humanSymbol]),
+                                           list('secM.all.GTs'=secM.amir[Subsystem%like%'glycosylation', humanSymbol]),
+                                           list('ALL.all.GTs' = unique(GTclass[class%like%'glycan', unique(GT.name)],
+                                                                       secM.amir[Subsystem%like%'glycosylation', humanSymbol])
+                                           )
+                                         ), 
+                                       stats = ranks, nproc =  1)
+  }, mc.cores = 32) %>% rbindlist(idcol='sample_ID')
+
+
+
+model.dt <- enzyme.gsea.dt[, .(enzyme.name = pathway, sample_ID, ES, NES)] %>% 
+  merge(mod.dt.summary[, .(sample_ID=sample, mod.type, length.norm.mod, num.modification)],
+        by='sample_ID', allow.cartesian=T) %>% 
+  merge(transgene.count.yield.dt.lfc, by='sample_ID') %>% 
+  setnames(x = ., old= names(.), new = gsub(pattern = '\\.', '_', names(.))) ## make name compatible with rethinking
+
+model.dt %>% ggplot(aes(NES,lfc_titer, color= log(1+num_modification), label=sample_ID)) + facet_wrap(~mod_type) + geom_point() + viridis::scale_color_viridis()
+```
+
+Modeling disulfide isomerase activities
+```{r}
+library(rethinking)
+library(data.table)
+library(magrittr)
+## re-arranging model.dt
+# model.dt %>% saveRDS('../temp.rds')
+# model.dt <- readRDS('../temp.rds')
+# model.dt.mod_enzyme = model.dt[mod_type=='Disulfide bond' & enzyme_name=='isomerase.genes', lapply(.SD, mean), by=sample_ID,
+#                                .SDcols=-c('enzyme_name', 'mod_type')]
+model.dt.mod_enzyme = model.dt[mod_type=='Glycosylation', ## focus on glycosylation only
+                               lapply(.SD, mean),
+                               by=.(sample_ID,enzyme_name),
+                               .SDcols=-c('enzyme_name', 'mod_type')]
+# model.dt.mod_enzyme = model.dt[mod_type%like%'Glycosylation' & enzyme_name=='all.GTs', lapply(.SD, mean), by=sample_ID,
+#                                .SDcols=-c('enzyme_name', 'mod_type')]
+
+
+input.dt <-  cbind(model.dt.mod_enzyme[enzyme_name=='all.GTs', .(sample_ID)],
+                   model.dt.mod_enzyme[enzyme_name=='all.GTs',
+                                       .(Titer_LFC = lfc_titer,#-lfc_TPM,
+                                         PTM_index = length_norm_mod,
+                                         Expr_enzyme = NES)] %>% scale() %>% as.data.table,
+                   model.dt.mod_enzyme[enzyme_name=='all.GTs',
+                                       .(Titer_LFC_original = lfc_titer,#-lfc_TPM,
+                                         PTM_index_original = length_norm_mod,
+                                         Expr_enzyme_original = NES)])
+scale.param <-  model.dt.mod_enzyme[enzyme_name=='all.GTs',
+                                    .(Titer_LFC = lfc_titer,#-lfc_TPM,
+                                      PTM_index = length_norm_mod,
+                                      Expr_enzyme = NES)] %>% scale() %>% list(center = attr(., 'scaled:center'),
+                                                                               scale  = attr(., 'scaled:scale'))
+# input.dt <-  model.dt[sample_ID!='PLG'][mod_type=='N-linked.Glycosylation'&enzyme_name=='N-glycan',
+#                                         .(Titer_LFC = lfc_titer,#-lfc_TPM,
+#                                           PTM_index = length_norm_mod,
+#                                           Expr_enzyme = NES)] %>% scale() %>% as.data.table
+# 
+
+m.interaction <- quap(
+  alist(
+    Titer_LFC ~ dnorm(mu_lfc_titer, sigma),
+    mu_lfc_titer <- a+ b_PTMind * PTM_index + b_ExprEnz * Expr_enzyme + 
+      b_PTMind__ExprEnz * PTM_index * Expr_enzyme,
+    sigma ~ dexp(1),
+    a ~  dnorm(0, 1),
+    
+    b_PTMind ~ dnorm(0, .25),
+    b_ExprEnz ~ dnorm(0, .25),
+    b_PTMind__ExprEnz~ dnorm(0,.25)
+    # b_RWR3_sigma ~ dexp(1),
+    
+  ), data = input.dt#,
+  # chains=16 , cores=16, control = list(adapt_delta = 0.99), iter = 4000
+)
+
+precis(m.interaction)
+
+PTM_ind <-  input.dt[, cut(PTM_index, quantile(PTM_index, probs=seq(0, 1, 1/4)), include.lowest = T)
+] %>% unique %>% sort()
+
+input.dt[, PTM_group:=  cut(PTM_index, quantile(PTM_index, probs=seq(0, 1, 1/4)), include.lowest = T,
+                            labels = c('lowest', 'low',
+                                       'medium', 'high'))
+]
+
+PTM.posterior.dt <- data.table()
+par(mfrow=c(1,length(PTM_ind))) # 3 plots in 1 row
+for ( sel.cut in PTM_ind ) {
+  # idx <- which( d$shade_cent==s )
+  input.sel <- input.dt[cut(PTM_index, breaks = quantile(PTM_index, probs=seq(0, 1, 1/4)),include.lowest = T
+  )==sel.cut]
+  Expr_enzyme.seqrange <- seq_range(range(input.dt$Expr_enzyme), n = 100)
+  input.sel[, plot(Expr_enzyme, Titer_LFC,  pch=16 , col=rangi2, 
+                   xlim=range(input.dt$Expr_enzyme), ylim=range(input.dt$Titer_LFC),
+                   main=sprintf('PTM index: %s', sel.cut))]
+  input.sel[, text(Expr_enzyme, Titer_LFC, col=rangi2, labels = sample_ID, pos = 1)]
+  set.seed(12345)
+  mu <- link( m.interaction ,
+              data = input.sel[, .(PTM_index= median(PTM_index), Expr_enzyme = Expr_enzyme.seqrange)])
+  for ( i in 1:1000 ) lines(x = Expr_enzyme.seqrange, 
+                            mu[i,] , col=col.alpha("black",0.008) )
+  
+  PTM.posterior.dt %<>% 
+    rbind(mu %>% `colnames<-`(Expr_enzyme.seqrange) %>%
+            data.table::melt(value.name='Relative Titer Foldchange') %>% as.data.table() %>% 
+            .[ ,PTM_group:=sel.cut])
+  
+}
+
+PTM.posterior.dt[, PTM_group:=factor(PTM_group, levels = levels(PTM_ind), 
+                                     labels = c('lowest', 'low',
+                                                'medium', 'high'))]
+PTM.posterior.dt[, `Relative Titer Foldchange`:=`Relative Titer Foldchange`*scale.param$scale[['Titer_LFC']] + scale.param$center[['Titer_LFC']]]
+fig5D <- PTM.posterior.dt%>%
+  ggplot(aes(Var2, `Relative Titer Foldchange`, color=PTM_group, fill=PTM_group)) +
+  stat_summary(geom = "smooth", se = TRUE, fun = mean, 
+               fun.min = function(x) HPDI(x)[1], 
+               fun.max = function(x) HPDI(x)[2]) + 
+  scale_colour_brewer(palette = 'BrBG', direction = -1)+
+  scale_fill_brewer(palette = 'BrBG', direction = -1)+
+  geom_point(data=input.dt, aes(Expr_enzyme, Titer_LFC_original, color=PTM_group), inherit.aes = F)+
+  geom_text_repel(data=input.dt, aes(Expr_enzyme, Titer_LFC_original, label=sample_ID, color=PTM_group), inherit.aes = F)+
+  facet_grid(~PTM_group)+ xlab('Glycosyltransferase expression') + theme_bw()# %+replace% theme(legend.position = 'bottom')
+ggsave2('fig5D', 'Figures_CHOHEK/2020/', height = 6, width = 7, plot = fig5D)
+# save.image('figures_2020_02_28.RDA', compress = T)
+
+
+## figure 5 composition
+# fig5 <- 
+#   (fig5A + ggplotify::as.ggplot(fig5b)+plot_layout(widths = c(1,2.15))
+#    )/(fig5C+fig5D + plot_layout(widths = c(1,1))) + plot_annotation(tag_levels = 'A') + plot_layout(heights = c(1.45, 1))
+# fig5 <- 
+#   (fig5A / ggplotify::as.ggplot(fig5b)#+plot_layout(heights =  = c(1,2))
+#    )/(fig5C+fig5D) + plot_annotation(tag_levels = 'A') #+ plot_layout(heights = c(1.45, 1))
+fig5 <- ggpubr::ggarrange(fig5A, fig5C, ggplotify::as.ggplot(fig5b), fig5D, labels = c('A', 'C', 'B', 'D'), ncol=2, nrow=2,
+                          widths = c(1.25,1))
+ggsave2('fig5', 'Figures_CHOHEK/2020/', width = 15, height = 11, plot = fig5)
+```
+
+here we compare the RWR score calculated based on interaction topology and the expression foldchanges between CHO and HEK. Additionally, rank_RWR was calculated for each secP, based on the rank of the support scores across all the clones, whether it is the producer clone or not.
+
+see reports for CHO96 https://docs.google.com/document/d/17192wM6DcizrR_R3_02jiPpaE1-hl5osZaO5uOXsrSc/edit
+
+```{r}
+RWR.summarized <- fread('data/RWR_allSecPs_summarized.csv') %>% 
+  setnames(c('V1', 'V2', 'V3'), c('secP', 'ID', 'type'))
+
+rwr.col <- 'context_weighted_secMs'
+RWR.summarized[, rank_RWR:=rank(get(rwr.col)), by='secP']
+RWR.summarized %>% {
+  . <- copy(.)
+  rank.order <- .[secP==ID][order(rank_RWR), secP]
+  .[, secP:=factor(secP, levels = rank.order)]
+  ggplot(., aes_string(x=rwr.col, y='secP')) + 
+    ggridges::geom_density_ridges(rel_min_height=.01, alpha=.75,) + 
+    geom_point(data=.[secP==ID], aes_string(x=rwr.col,  y='secP', color='rank_RWR')) + 
+    # geom_point(data=.[ID=='WT'], aes(x=context_weighted_secMs,  y=secP), color='black', shape=3) + 
+    scale_color_gradient2(midpoint = .[secP==ID, median(rank_RWR)], low = 'red', mid = 'yellow', high = 'blue') +
+    theme_dark()
+}
+
+
+
+RWR.summarized %>% ggplot(aes(context_weighted_secMs, group=secP))
+
+
+merge(transgene.count.yield.dt.lfc, RWR.summarized[secP==ID, -c('ID', 'type')], by.x='sample_ID', by.y='secP') %>% dt.to.df %>% psych::pairs.panels()
+
+# m <- lm(lfc.titer~lfc.TPM+context_weighted_secMs, kk %>% dt.to.df() %>% scale %>% as.data.frame())
+```
+
+#2020 update: new samples
+```{r uniprot mapping}
+Gene_list_ExpiCHO <- read_excel("data/Gene list ExpiCHO.xlsx") %>% as.data.table %>% setnames('...1', 'sample')
+Gene_list_ExpiCHO[, titer.lfc.Expi_QMCF:=
+                    log((.SD[`ExpiCHO titer (ug/ml)`>0, min(`ExpiCHO titer (ug/ml)`)]+`ExpiCHO titer (ug/ml)`)/
+                          (.SD[`QMCF titer (ug/ml)`>0,min(`QMCF titer (ug/ml)`)] + `QMCF titer (ug/ml)`)
+                    )]
+Gene_list_ExpiCHO[, titer.diff.Expi_QMCF:= `ExpiCHO titer (ug/ml)`- `QMCF titer (ug/ml)`]
+swissprot <- read_excel("data/swissprot.xlsx") %>% as.data.table()
+library(org.Hs.eg.db)
+prot_SYMBOL <- as.data.table(select(org.Hs.eg.db, Gene_list_ExpiCHO[, sample], "UNIPROT", "SYMBOL"))[UNIPROT%in%swissprot$Entry]
+stopifnot(all(prot_SYMBOL[, .N, by=SYMBOL]$N==1)) ## all unique mappings 
+
+```
+## protein features
+TODO:isoform correction
+```{r PTM from features}
+Uniprot.names2020 <- prot_SYMBOL %>% tibble::deframe()
+all.uni.dt <- data.table() ## note that variable names reused
+AA.stats.dt <- data.table()
+length.dt <- data.table()
+for (protein.i in seq_along(Uniprot.names2020)){
+  uniprot.dt <- fread(sprintf('https://www.uniprot.org/uniprot/%s.gff', Uniprot.names2020[protein.i]), skip = 2, na.strings = '.')
+  all.uni.dt %<>% rbind(uniprot.dt[,sample := names(Uniprot.names2020)[protein.i]])
+  seq <- seqinr::getSequence(Gene_list_ExpiCHO[sample==prot_SYMBOL[UNIPROT==Uniprot.names2020[protein.i], SYMBOL], `Amino acid sequence`])
+  seq.AA <- seqinr::AAstat(seq = seq, plot = F)
+  # seq.AA <- seqinr::read.fasta(sprintf('https://www.uniprot.org/uniprot/%s.fasta', Uniprot.names2020[protein.i]),
+  #                              seqtype = "AA")[[1]] %>% 
+  #   seqinr::AAstat(plot = F)
+  AA.comp.dt <- as.data.table(matrix(seq.AA$Compo[-1]/sum(seq.AA$Compo[-1]), nrow=1, dimnames = list('_', paste0('comp_', names(seq.AA$Compo[-1])))))
+  AA.Prop.dt <- as.data.table(seq.AA$Prop)
+  combinedAAstat <- cbind(AA.Prop.dt, AA.comp.dt)[,sample := names(Uniprot.names2020)[protein.i]]
+  AA.stats.dt %<>% rbind(combinedAAstat)
+  length.dt %<>% rbind(data.table(sample = names(Uniprot.names2020)[protein.i],
+                                  length = seqinr::read.fasta(sprintf('https://www.uniprot.org/uniprot/%s.fasta', Uniprot.names2020[protein.i]))[[1]] %>% length(),
+                                  length.from.seq =  length(seq),
+                                  MW.from.seq = seqinr::pmw(seq))
+  )
+}
+
+AA.stats.df <- AA.stats.dt %>% dt.to.df(rn.col = 'sample') 
+AA.stats.df[,-caret::findCorrelation(cor(AA.stats.df), cutoff = .8)] %>% cor %>% corrplot::corrplot(method='ellipse')
+AA.stats.dt <- AA.stats.df[,-caret::findCorrelation(cor(AA.stats.df), cutoff = .8)] %>% as.data.table(keep.rownames = 'sample')
+
+
+length.dt %>% setkey(sample)
+all.uni.dt.filled <- fill.sites(all.uni.dt)
+uni.dt.secstruc <- all.uni.dt.filled[uniprot.proc%in%c('Helix', 'Turn', 'Beta strand')]
+uni.dt.PTM <- all.uni.dt.filled[uniprot.proc%in%c('Disulfide bond', 'Lipidation', 'Glycosylation', 'Modified residue')]
+uni.dt.PTM[uniprot.proc=='Disulfide bond', mod.type:='Disulfide bond']
+uni.dt.PTM[uniprot.proc=='Lipidation', mod.type:='GPI-anchor']
+uni.dt.PTM[note%like%'Phosphothreonine' | note%like%'Phosphoserine', mod.type:='p']
+uni.dt.PTM[note%like%'O-linked', mod.type:='O-linked.Glycosylation']
+uni.dt.PTM[note%like%'N-linked', mod.type:='N-linked.Glycosylation']
+combined.mod.dt <- uni.dt.PTM[!is.na(mod.type), .(sample, res.id, mod.type)]
+combined.mod.dt<- rbind(combined.mod.dt, combined.mod.dt[mod.type%like%'Glycosylation'][, .(sample, res.id, mod.type='Glycosylation')])
+combined.mod.dt %>% ggplot(aes(mod.type)) + geom_bar() + facet_wrap(~sample) + coord_polar()
+```
+
+```{r visualize PTM features}
+max.mod.dt <- combined.mod.dt[, .N, by=.(sample, mod.type)][, .(.N.max = max(N)),by=mod.type] %>% setkey(mod.type)
+
+mod.dt.summary <- combined.mod.dt[, .(num.modification = .N), by=.(sample, mod.type)] %>% 
+  .[CJ(sample=unique( Gene_list_ExpiCHO$sample), mod.type=unique(combined.mod.dt$mod.type)), on=.(sample, mod.type)] %>% 
+  .[is.na(num.modification), num.modification:=0] %>% # fill zeros
+  .[, normalized.modification:= num.modification/max.mod.dt[mod.type, .N.max]] %>% 
+  merge(length.dt, by='sample') %>% 
+  .[, length.norm.mod:=num.modification/length]
+# mod.dt.summary %>% ggplot(aes(mod.type, normalized.modification, fill=mod.type)) + geom_col(width = 1) + 
+#   facet_wrap(~sample) + coord_polar() 
+figS1A <- mod.dt.summary %>% #[!mod.type%like%'linked'] %>% 
+  .[mod.type%in%c('Disulfide bond', 'Glycosylation', 'p')] %>%
+  .[mod.type=='p', mod.type:='Phosphorylation'] %>% 
+  ggplot(aes(sample, length.norm.mod)) + geom_col(width = .9) + 
+  facet_wrap(~mod.type, scales = 'free_x') + coord_flip() + ylab('PTM index') + theme_bw()
+
+# mod.dt.summary[!mod.type%like%'linked'] %>% 
+#   ggplot(aes(sample, normalized.modification, fill=mod.type)) + geom_col(width = .9) + 
+#   facet_wrap(~mod.type, scales = 'free_x') + coord_flip() + ylab('PTM index')
+```
+
+```{r correlation with production yields}
+## PTMs
+Gene_list_ExpiCHO %>% ggplot(aes(sample)) + geom_linerange(aes(ymin=`ExpiCHO titer (ug/ml)`, ymax= `QMCF titer (ug/ml)`, color=titer.lfc.Expi_QMCF),
+                                                           arrow = arrow(length=unit(0.30,"cm"), ends="first", type = "closed")) + scale_colour_gradient2()
+
+fig1C <- 
+  merge(length.dt[, .(sample, `Molecular weight`=MW.from.seq)],
+        Gene_list_ExpiCHO[, -'Amino acid sequence'], by='sample') %>% 
+  merge(mod.dt.summary %>%  
+          .[mod.type=='Glycosylation'] %>% 
+          dcast(sample~mod.type, value.var= 'length.norm.mod'), by='sample') %>% 
+  melt(measure.vars=c('Glycosylation', 'Molecular weight')) %>% {
+    ggplot(data=.,
+           aes(value, titer.lfc.Expi_QMCF, label=sample, color=value>0)) + 
+      facet_grid(~variable, scales = 'free')+
+      geom_point() + 
+      scale_color_discrete(guide=F)+
+      ggrepel::geom_text_repel() +
+      geom_smooth(data=.[value>0], method='lm')+
+      ggpubr::stat_cor(data=.[value>0], na.rm = T, label.y = 2) +
+      theme_bw() %+replace% theme(legend.position = 'bottom') + ylab('Titer fold change') + xlab('Glycosylation index/ Molecular weight (dalton)')
+  }
+ggsave2('fig1C', 'Figures_CHOHEK/2020/', plot=fig1C, width = 10, height = 5)
+
+figS1B <- mod.dt.summary %>%  
+  .[mod.type%in%c('Disulfide bond', 'Glycosylation', 'p')] %>%
+  .[mod.type=='p', mod.type:='Phosphorylation'] %>% 
+  dcast(sample~mod.type, value.var= 'length.norm.mod') %>%
+  merge(Gene_list_ExpiCHO[, -'Amino acid sequence'], by='sample') %>% 
+  melt(measure.vars=c('Disulfide bond', 'Glycosylation', 'Phosphorylation'), variable.name='mod.type', value.name='PTM.index') %>% {
+    
+    ggplot(data=.,
+           aes(PTM.index, titer.lfc.Expi_QMCF, label=sample, color=PTM.index>0)) + 
+      geom_point() + 
+      ggrepel::geom_text_repel() + facet_grid(~mod.type, scales = 'free_x') +
+      ggpubr::stat_cor(data=.[PTM.index>0], na.rm = T) + 
+      geom_smooth(data=.[PTM.index>0], method='lm', se=F) + theme_bw() %+replace% theme(legend.position = 'bottom')
+  }
+figS1 <- figS1A/figS1B + patchwork::plot_annotation(tag_levels = 'A') #patchwork::plot_layout(heights = c(1, 1.8))
+ggsave2('figS1', 'Figures_CHOHEK/2020/', plot = figS1, width = 12, height = 14)
+## lengths and MWs
+```
+
+
+```{r DE 2020 old, eval=FALSE, include=FALSE}
+sample_info_Expi <- fread('2020July/TPM_expicho_ordered_magda.csv', header = T, nrow=2)[, -'symbol'] %>% 
+  melt(id.vars='V1', variable.name='sample_ID') %>% 
+  dcast(sample_ID~V1, value.var='value')
+sample_info_Expi[Condition=='Mock transfected', control:='mock_transfected']
+sample_info_Expi[Condition=='-', control:='untransfected']
+counts_Expi <- fread('2020July/COUNTS_expicho_ordered_magda.csv', header = T) %>% .[3:nrow(.)] %>% 
+  .[!symbol%in%.[, .N, by=symbol][N>1, symbol], -'V1'] %>% .[, lapply(.SD, as.numeric), by=symbol]
+abundance_Expi <- fread('2020July/TPM_expicho_ordered_magda.csv', header = T) %>% .[3:nrow(.)] %>% 
+  .[!symbol%in%.[, .N, by=symbol][N>1, symbol], -'V1'] %>% .[, lapply(.SD, as.numeric), by=symbol]
+counts_Icosagen <- as.data.table(txi.cho$counts, keep.rownames = 'symbol')
+abundance_Icosagen <- as.data.table(txi.cho$abundance, keep.rownames = 'symbol')
+
+colData_Expi_Icosagen <- rbind(data.table(sample_ID = as.character(sample_info_Expi$sample_ID), CHO.line = 'ExpiCHO'),
+                               data.table(sample_ID = as.character(colnames(txi.cho$abundance)), CHO.line = 'QMCF'))
+colData_Expi_Icosagen[, control:='non-control']
+colData_Expi_Icosagen[CHO.line=='QMCF'&sample_ID%in%files.list.select[producer==F&tg.use=='noTG'&cellLine.binary=='CHO', sample_ID_unique],
+                      control:='mock_transfected']
+colData_Expi_Icosagen[CHO.line=='ExpiCHO'&sample_ID%in%sample_info_Expi[Condition=='Mock transfected', sample_ID],
+                      control:='mock_transfected']
+
+
+length_Expi_Icosagen <- as.data.table(txi.cho$length, keep.rownames = 'symbol') %>% 
+  melt(id.vars= 'symbol', value.name= 'length') %>% .[, mean(length), by='symbol'] %>% 
+  .[, CJ(length= V1, sample_ID = colData_Expi_Icosagen$sample_ID), by=symbol] %>% 
+  dcast(symbol~sample_ID, value.var='length')
+counts_Expi_Icosagen <- merge(counts_Expi, counts_Icosagen, by='symbol')
+abundance_Expi_Icosagen <- merge(abundance_Expi, abundance_Icosagen, by='symbol')
+
+
+
+## convert to txi
+txi_Expi_Icosagen <- list(abundance = abundance_Expi_Icosagen[, c('symbol', colData_Expi_Icosagen$sample_ID), with=F] %>% dt.to.df() %>%
+                            as.matrix(),
+                          counts = counts_Expi_Icosagen[, c('symbol', colData_Expi_Icosagen$sample_ID), with=F] %>% 
+                            dt.to.df() %>%  as.matrix(),
+                          length = length_Expi_Icosagen[symbol%in%abundance_Expi_Icosagen$symbol, c('symbol', colData_Expi_Icosagen$sample_ID), with=F] %>% 
+                            dt.to.df() %>%  as.matrix(),
+                          countsFromAbundance = 'no')
+dds_Expi_Icosagen <- DESeqDataSetFromTximport(txi_Expi_Icosagen, colData_Expi_Icosagen %>% dt.to.df(), ~CHO.line+control)
+dds_Expi_Icosagen %<>% DESeq(parallel = T, betaPrior = T)
+
+PCA.plot.Expi_Icosagen <- 
+  vst(dds_Expi_Icosagen, blind = T) %>% 
+  plotPCA(intgroup = c('CHO.line', 'control'), returnData = T) %>% as.data.table %>%  {
+    percentVar <- round(100 * attr(., "percentVar"))
+    ggplot(., aes_string('PC1', 'PC2', color='CHO.line', label = 'control', shape = 'cellLine')) +
+      geom_point(size=3) +
+      # viridis::scale_color_viridis(option = 'inferno', discrete = color.discrete, na.value="grey")+
+      ggrepel::geom_text_repel(data=.[control!='non-control'])+
+      xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+      ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+      coord_fixed()
+  }
+
+## transcriptome usage
+### orthologs conversion
+txi_Expi_Icosagen.converted <- lapply(txi_Expi_Icosagen, txi.id.conversion,
+                                      conversion.table = fread('../databases/ConversionTable/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
+)
+dds_Expi_Icosagen.converted <- DESeqDataSetFromTximport(txi_Expi_Icosagen.converted, colData_Expi_Icosagen %>% dt.to.df(), ~CHO.line)
+dds_Expi_Icosagen.converted %<>% DESeq(parallel = T, betaPrior = T)
+
+Expi_Icosagen.converted.tpm <- txi_Expi_Icosagen.converted$abundance %>% melt %>% as.data.table %>% setnames(c('humanSymbol', 'sample_ID', 'TPM')) %>% 
+  merge(colData_Expi_Icosagen) %>% setkey(humanSymbol)
+
+Expi_Icosg.all.transcriptome.usage <- rbind(Expi_Icosagen.converted.tpm[!secM.amir, on='humanSymbol'][, 'functionalGroup':= 'Other'],
+                                            Expi_Icosagen.converted.tpm[secM.amir, on='humanSymbol'], fill=T)[!is.na(TPM)]
+
+figExpi_Icosg.mosaic <- Expi_Icosagen.converted.tpm%>%
+  .[, .(TPM.mean = mean(TPM)), by = .(humanSymbol, sample_ID, CHO.line,control)] %>%
+  mosaic.plot.simple(tmd.dt = tmd.dt.sec)+ 
+  facet_grid(control~CHO.line) #+ coord_polar("y", start=0)
+
+figIcosg.all.transcriptome.usage.plot <- 
+  Expi_Icosg.all.transcriptome.usage[, .(TPM=mean(TPM)), by=c('humanSymbol','CHO.line','control', 'functionalGroup')] %>% 
+  .[, transcriptome.frac:= TPM/ sum(TPM, na.rm = T), by = c('CHO.line','control')] %>%
+  .[!functionalGroup%in%c('Transgene','Other')] %>% 
+  ggplot(aes(CHO.line, transcriptome.frac, fill = functionalGroup)) +
+  geom_bar(stat = 'identity') +
+  facet_grid( ~control) +
+  scale_y_continuous(label = scales::percent) +
+  ylab('Fraction of Transcriptome') +
+  # coord_flip() +
+  theme_cleveland() +
+  scale_fill_manual(name = 'Functional Group',
+                    values=c(wesanderson::wes_palette(n=11, name="Darjeeling1", type = 'continuous'))) +
+  theme_bw() %+replace% theme(axis.text.x = element_text(angle = 45)) + xlab('Expression system')
+
+Expi_Icosg_comparison.vsd <- vst(dds_Expi_Icosagen.converted) %>% assay() %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>%
+  melt(measure.vars = colnames( txi_Expi_Icosagen.converted$abundance),
+       variable.name = 'sample_ID',
+       value.name = 'VSD') 
+
+
+figExpi_Icosg_sec_comparison <- Expi_Icosg.all.transcriptome.usage %>% merge(Expi_Icosg_comparison.vsd, by=c('sample_ID', 'humanSymbol')) %>% 
+  .[!functionalGroup%in%c('Transgene','Other')] %>% 
+  .[, .(VSD = mean(VSD, na.rm = T)),
+    by = c('functionalGroup', 'CHO.line', 'sample_ID')] %>% {
+      
+      ggplot(.,aes(CHO.line, VSD)) + 
+        geom_boxplot(alpha = .4, outlier.alpha = .4, outlier.shape = NA) + 
+        # stat_compare_means(comparisons = list(c("CHO", "293F"),
+        #                                       c("CHO", "293Freestyle")),
+        #                    label = "p.signif", hide.ns = T) + 
+        facet_wrap(~functionalGroup, scales = 'free') +
+        # theme(axis.title.x=element_blank(),
+        #       axis.text.x=element_blank(),
+        #       axis.ticks.x=element_blank(),
+        #       strip.text.x = element_text(angle = 0)) +
+        ylab('average transformed count') + theme_bw() + xlab('Expression system')
+    }
+
+fig_Expi_Icosg_comparison <- (figExpi_Icosg.mosaic | figIcosg.all.transcriptome.usage.plot | figExpi_Icosg_sec_comparison) + plot_annotation(tag_levels = 'A') + plot_layout(widths = c(1.5, 1.5, 4))
+ggsave2('fig_Expi_Icosg_comparison', 'Figures_CHOHEK/2020/', plot = fig_Expi_Icosg_comparison, width = 16, height = 9)
+
+```
+
+
+```{r DE2020 new}
+# cho.txdb <- GenomicFeatures::makeTxDbFromGFF('~/genome/cho_2018/chok1.gff3')
+# cho.k <- keys(cho.txdb, keytype = "TXNAME")
+# cho.tx2gene <- AnnotationDbi::select(cho.txdb, cho.k, "GENEID", "TXNAME")
+
+cho.files <- files.list.select[tg.use=='noTG'& cellLine.binary == 'CHO'][, file.path(path, filename)]
+names(cho.files) <- files.list.select[tg.use=='noTG'& cellLine.binary == 'CHO']$sample_ID_unique
+
+fns = list.files(pattern="quant.sf", path = '../../Sequence/2020_ExpiCHO/salmon_noTG/', recursive = T)
+filesDE2020.dt <- data.table(path = '../../Sequence/2020_ExpiCHO/salmon_noTG/',
+                             filename = fns)
+filesDE2020.dt[filename%like%'NG-17778', cellLine:='ExpiCHO']
+filesDE2020.dt[filename%like%'P6975', cellLine:='QMCF']
+filesDE2020.dt[, sample.name:=c('NG-17778_1','NG-17778_2', 'P6975-196_1', 'P6975-196_2')]
+txi.DE2020 <- tximport(filesDE2020.dt[, file.path(path, filename) %>% `names<-`(sample.name)], type = "salmon", tx2gene = cho.tx2gene)
+txi.DE2020.converted <- lapply(txi.DE2020, txi.id.conversion,
+                               conversion.table = fread('../databases/ConversionTable/180405CHO_HUMAN_SYMBOL_ID_MAPPING_all.tsv', na.strings = '')
+)
+
+
+dds_DE2020.converted <- DESeqDataSetFromTximport(txi.DE2020.converted, filesDE2020.dt %>% dt.to.df(rn.col='sample.name'), ~cellLine)
+dds_DE2020.converted %<>% DESeq(parallel = T, betaPrior = T)
+
+DE2020.converted.tpm <- txi.DE2020.converted$abundance %>% melt %>% as.data.table %>% setnames(c('humanSymbol', 'sample.name', 'TPM')) %>% 
+  merge(filesDE2020.dt[, -c('filename', 'path')]) %>% setkey(humanSymbol)
+
+DE2020.transcriptome.usage <- rbind(DE2020.converted.tpm[!secM.amir, on='humanSymbol'][, 'functionalGroup':= 'Other'],
+                                    DE2020.converted.tpm[secM.amir, on='humanSymbol'], fill=T)[!is.na(TPM)]
+
+figDE2020.mosaic <- DE2020.transcriptome.usage%>%
+  .[, .(TPM.mean = mean(TPM)), by = .(humanSymbol, sample.name, cellLine)] %>%
+  mosaic.plot.simple(tmd.dt = tmd.dt.sec, mosaic.filter = T)+ 
+  facet_grid(~cellLine) #+ coord_polar("y", start=0)
+
+figDE2020.all.transcriptome.usage.plot <- 
+  DE2020.transcriptome.usage[, .(TPM=mean(TPM)), by=c('humanSymbol','cellLine', 'functionalGroup')] %>% 
+  .[, transcriptome.frac:= TPM/ sum(TPM, na.rm = T), by = c('cellLine')] %>%
+  .[!functionalGroup%in%c('Transgene','Other')] %>% 
+  ggplot(aes(1,transcriptome.frac, fill = functionalGroup)) +
+  geom_bar(stat = 'identity') +
+  facet_grid( ~cellLine) +
+  scale_y_continuous(label = scales::percent) +
+  ylab('Fraction of Transcriptome') +
+  # coord_flip() +
+  scale_fill_manual(name = 'Functional Group',
+                    values=c(wesanderson::wes_palette(n=11, name="Darjeeling1", type = 'continuous'))) +
+  theme_bw() %+replace% theme(
+    axis.ticks.x = element_blank(),
+    axis.text.x = element_blank(),
+    axis.title.x=element_blank() 
+  ) + xlab('Expression system')
+
+DE2020_comparison.vsd <- vst(dds_DE2020.converted) %>% assay() %>% as.data.frame() %>% as.data.table(keep.rownames = 'humanSymbol') %>%
+  melt(measure.vars = colnames( txi.DE2020.converted$abundance),
+       variable.name = 'sample.name',
+       value.name = 'VSD') 
+
+
+DE2020_sec_comparison <- DE2020.transcriptome.usage %>% merge(DE2020_comparison.vsd, by=c('sample.name', 'humanSymbol')) %>% 
+  .[!functionalGroup%in%c('Transgene','Other')] %>% 
+  .[, .(VSD = mean(VSD, na.rm = T)),
+    by = c('functionalGroup', 'cellLine', 'sample.name')] %>% {
+      
+      ggplot(.,aes(cellLine, VSD)) + 
+        geom_boxplot(alpha = .4, outlier.alpha = .4, outlier.shape = NA) + 
+        stat_compare_means(label = "p.signif", hide.ns = T) +
+        facet_wrap(~functionalGroup, scales = 'free_y') +
+        ylab('average transformed count') + theme_bw() %+replace%
+        theme(axis.text.x = element_text(angle = 30)) +
+        xlab('Expression system')
+    }
+
+fig_DE2020_comparison <- (figDE2020.mosaic | figDE2020.all.transcriptome.usage.plot | DE2020_sec_comparison) + plot_annotation(tag_levels = 'A') + plot_layout(widths = c(1, 1, 4))
+ggsave2('fig_DE2020_comparison', 'Figures_CHOHEK/2020/', plot = fig_DE2020_comparison, width = 14, height = 9)
+
+```
+
